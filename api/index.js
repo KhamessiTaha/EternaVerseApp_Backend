@@ -27,7 +27,7 @@ async function connectDB() {
   }
 }
 
-// DON'T call connectDB() here globally
+
 
 const app = express();
 app.use(cors());
