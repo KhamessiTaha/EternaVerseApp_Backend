@@ -29,7 +29,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// your routes
+//routes
 app.use("/auth", authRoutes);
 app.use("/user", userRoutes);
 app.use("/universe", universeRoutes);
