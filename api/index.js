@@ -1,5 +1,4 @@
 const express = require("express");
-const serverless = require("serverless-http");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const mongoose = require("mongoose");
@@ -43,14 +42,16 @@ app.get("/", (req, res) => {
   res.send("EternaVerseApp API running on Vercel");
 });
 
+app.get("/api", (req, res) => {
+  res.send("EternaVerseApp API running on Vercel");
+});
+
 const authRoutes = require("../routes/auth");
 const userRoutes = require("../routes/user");
 const universeRoutes = require("../routes/universe");
 
-app.use("/auth", authRoutes);
-app.use("/user", userRoutes);
-app.use("/universe", universeRoutes);
+app.use("/api/auth", authRoutes);
+app.use("/api/user", userRoutes);
+app.use("/api/universe", universeRoutes);
 
-// Simple export for Vercel
 module.exports = app;
-module.exports.default = serverless(app);
