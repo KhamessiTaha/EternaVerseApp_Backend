@@ -6,7 +6,6 @@ const mongoose = require("mongoose");
 
 dotenv.config();
 
-// Remove the global connectDB call
 let isConnected = false;
 
 async function connectDB() {
@@ -27,13 +26,10 @@ async function connectDB() {
   }
 }
 
-
-
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Middleware to connect to DB on each request
 app.use(async (req, res, next) => {
   try {
     await connectDB();
@@ -47,7 +43,6 @@ app.get("/", (req, res) => {
   res.send("EternaVerseApp API running on Vercel");
 });
 
-// Load routes after app is defined
 const authRoutes = require("../routes/auth");
 const userRoutes = require("../routes/user");
 const universeRoutes = require("../routes/universe");
@@ -56,9 +51,6 @@ app.use("/auth", authRoutes);
 app.use("/user", userRoutes);
 app.use("/universe", universeRoutes);
 
-module.exports = serverless(app);
-module.exports.handler = async (event, context) => {
-  context.callbackWaitsForEmptyEventLoop = false;
-  const handler = serverless(app);
-  return handler(event, context);
-};
+// Simple export for Vercel
+module.exports = app;
+module.exports.default = serverless(app);
