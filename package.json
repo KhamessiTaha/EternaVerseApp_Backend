@@ -1,15 +1,10 @@
 {
-  "name": "server",
+  "name": "eterna-backend",
   "version": "1.0.0",
-  "main": "index.js",
+  "type": "commonjs",
   "scripts": {
-    "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "node dev.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
