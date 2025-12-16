@@ -1,26 +1,30 @@
 const seedrandom = require("seedrandom");
 
 /**
- * refactored PhysicsEngine
- * handles ONLY core physics: expansion, structures, life evolution, stability
- * anomalies and end conditions moved to separate modules
+ * Enhanced PhysicsEngine with improved civilization lifecycle management
+ * - Prevents civilization bloat through natural attrition
+ * - Implements realistic extinction events
+ * - Caps maximum civilizations to prevent database overload
  */
 class PhysicsEngine {
   constructor(universe, options = {}) {
     if (!universe) throw new Error("PhysicsEngine requires a universe object");
 
     this.universe = universe;
-    //PARAMAETERS §§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§
+    
     this.options = {
       timeStepYears: options.timeStepYears ?? 1e7,
       maxScaleFactorExp: 50,
       seed: options.seed ?? universe?.seed ?? "default-seed",
       difficultyModifier: options.difficultyModifier ?? 1.0,
       enableProgressiveEvents: options.enableProgressiveEvents ?? true,
+      maxCivilizations: options.maxCivilizations ?? 500, // PREVENT BLOAT
+      civilizationCullInterval: options.civilizationCullInterval ?? 10, // Steps between culling
       ...options,
     };
 
     this.rng = seedrandom(this.options.seed);
+    this.stepsSinceLastCull = 0; // Track culling frequency
 
     // Initialize constants with proper defaults
     const uniConstants = universe.constants || {};
@@ -59,6 +63,10 @@ class PhysicsEngine {
     cs.civilizationCount = cs.civilizationCount ?? 0;
     cs.metallicity = cs.metallicity ?? 0;
     
+    // NEW: Track civilization statistics
+    cs.civilizationsCreated = cs.civilizationsCreated ?? 0;
+    cs.civilizationsExtinct = cs.civilizationsExtinct ?? 0;
+    
     // Enhanced state tracking
     cs.cosmicPhase = cs.cosmicPhase ?? "dark_ages";
     cs.stellarGenerations = cs.stellarGenerations ?? 0;
@@ -71,11 +79,9 @@ class PhysicsEngine {
   }
 
   _initializeTracking() {
-    // Track stability history for trend analysis
     this.stabilityHistory = [];
     this.maxHistoryLength = 100;
     
-    // Track milestones - INITIALIZE from database or defaults
     this.milestones = this.universe.milestones || {
       firstGalaxy: false,
       firstStar: false,
@@ -83,18 +89,17 @@ class PhysicsEngine {
       firstCivilization: false,
       stellarPopulationI: false,
       complexLifeEra: false,
-      technologicalSingularity: false
+      technologicalSingularity: false,
+      greatFilter: false, // NEW: Mass extinction event
+      transcendence: false // NEW: Type 3 civilization achievement
     };
     
-    // Ensure universe.milestones exists and is properly linked
     if (!this.universe.milestones) {
       this.universe.milestones = this.milestones;
     } else {
-      // Sync existing milestones to local reference
       this.milestones = this.universe.milestones;
     }
     
-    // Run deduplication on initialization
     this._deduplicateMilestones();
   }
 
@@ -132,42 +137,29 @@ class PhysicsEngine {
     const H0 = this.constants.H0;
     const a = cs._scaleFactor;
     
-    // Calculate density parameters at current scale factor
     const matterTerm = (this.constants.darkMatterDensity + this.constants.baryonicDensity) / Math.pow(a, 3);
     const radiationTerm = 0.0001 / Math.pow(a, 4);
     const darkTerm = this.constants.darkEnergyDensity;
     
-    // Friedmann equation: H(a)² = H0² * (Ωm/a³ + Ωr/a⁴ + ΩΛ)
     const H_eff = H0 * Math.sqrt(Math.max(0, matterTerm + radiationTerm + darkTerm));
     
-    // Scale factor evolution: da/dt = H(a) * a
     const expansionFactor = H_eff * dt;
     const cappedExpansion = this._clamp(expansionFactor, -0.1, 0.1);
     const growth = this._safeExp(cappedExpansion);
     
-    cs._scaleFactor = this._clamp(
-      cs._scaleFactor * growth,
-      1e-10,
-      1e10
-    );
-
-    // Update expansion rate for display
+    cs._scaleFactor = this._clamp(cs._scaleFactor * growth, 1e-10, 1e10);
     cs.expansionRate = H_eff * 3.08567758128e19 / 3.15576e7;
 
-    // Temperature cooling: T ∝ 1/a (adiabatic expansion)
     const T0 = this.universe.initialConditions?.initialTemperature ?? 2.725;
     cs.temperature = this._clamp(T0 / cs._scaleFactor, 0.01, T0 * 100);
 
-    // Entropy growth (logarithmic with volume)
     const volumeRatio = Math.pow(cs._scaleFactor, 3);
     const entropyGrowth = Math.log(Math.max(1, volumeRatio)) * 1e5 * (dt / 1e8);
     cs.entropy = this._clamp(cs.entropy + entropyGrowth, 0, 1e16);
     
-    // Energy budget decreases over time (thermodynamic arrow)
     const energyDecay = 5e-13 * dt;
     cs.energyBudget = this._clamp(cs.energyBudget - energyDecay, 0, 1.0);
     
-    // Update cosmic phase
     this._updateCosmicPhase();
   }
 
@@ -190,149 +182,97 @@ class PhysicsEngine {
     const dt = this.options.timeStepYears;
     const ageGyr = age / 1e9;
 
-    // ==================== GALAXY FORMATION ====================
+    // Galaxy formation
     const K = this.constants.observableGalaxies;
-    
-    // Formation peaks between 2-8 Gyr, then slows
     const formationPeak = Math.exp(-Math.pow((ageGyr - 5) / 3, 2));
     const baseRate = 0.15 / 1e9;
     const r = baseRate * (1 + formationPeak * 2);
-    
     const current = cs.galaxyCount;
     
     let dG = 0;
     
-    // CRITICAL: Bootstrap mechanism for early universe
     if (ageGyr > 0.1 && ageGyr < 2.5 && current < 1000) {
-      // Rapid seed formation in early universe
       const seedRate = 2000 * Math.exp(-Math.pow((ageGyr - 0.5) / 0.7, 2));
       dG = seedRate * (dt / 1e7);
-      
-      if (dG > 10) {
-        console.log(`🌌 SEED GALAXIES: Adding ${dG.toFixed(0)} galaxies (age: ${ageGyr.toFixed(2)} Gyr, total: ${(current + dG).toFixed(0)})`);
-      }
     } else if (current > 0) {
-      // Normal logistic growth (requires existing population)
       dG = r * current * (1 - current / Math.max(1, K)) * dt;
     }
     
-    // Safety: Ensure at least some galaxies exist after 1 Gyr
     if (ageGyr > 1.0 && current < 100) {
-      console.log(`🆘 BOOTSTRAP: Adding 100 seed galaxies at ${ageGyr.toFixed(2)} Gyr`);
       dG += 100;
     }
   
     cs.galaxyCount = this._clamp(current + dG, 0, K * 1.5);
     
-    // Milestone: First galaxy
     if (cs.galaxyCount >= 1 && !this.milestones.firstGalaxy) {
-      this._recordMilestone(
-        'firstGalaxy',
-        "First Galaxy Formation", 
-        "The first galaxy has formed from primordial gas clouds"
-      );
+      this._recordMilestone('firstGalaxy', "First Galaxy Formation", 
+        "The first galaxy has formed from primordial gas clouds");
     }
 
-    // ==================== STAR FORMATION ====================
+    // Star formation
     const starsPerGalaxy = this.constants.averageStarsPerGalaxy;
     const starsTarget = cs.galaxyCount * starsPerGalaxy;
     
     if (cs.galaxyCount > 0) {
-      // Star formation efficiency depends on metallicity and gas availability
       const metallicityBoost = 1 + cs.metallicity * 0.5;
-      const gasFraction = Math.exp(-ageGyr / 10); // Gas depletes over time
-      
-      // Aggressive star formation rate for gameplay
+      const gasFraction = Math.exp(-ageGyr / 10);
       const sfRate = 0.003 * gasFraction * metallicityBoost;
       
       const starGrowth = (starsTarget - cs.starCount) * sfRate * (dt / 1e7);
       cs.starCount = Math.max(0, cs.starCount + starGrowth);
       
-      // Bootstrap: Ensure stars form once galaxies exist
       if (ageGyr > 0.5 && cs.galaxyCount > 10 && cs.starCount < 1e6) {
-        const boost = 1e6;
-        console.log(`⭐ BOOTSTRAP: Adding ${boost.toExponential(1)} stars`);
-        cs.starCount += boost;
+        cs.starCount += 1e6;
       }
       
-      // Milestone: First star
       if (cs.starCount >= 1 && !this.milestones.firstStar) {
-        this._recordMilestone(
-          'firstStar',
-          "First Star Ignition", 
-          "The first stars have ignited, ending the cosmic dark ages"
-        );
+        this._recordMilestone('firstStar', "First Star Ignition", 
+          "The first stars have ignited, ending the cosmic dark ages");
       }
     }
     
-    // ==================== STELLAR EVOLUTION ====================
+    // Stellar evolution
     if (cs.starCount > 0) {
-      // Stellar death and generations
       const stellarDeathRate = cs.starCount * 1e-11 * dt;
       const generationIncrease = stellarDeathRate / (starsPerGalaxy * 10);
       cs.stellarGenerations = Math.min(cs.stellarGenerations + generationIncrease, 10);
       
-      // Metallicity increases from stellar nucleosynthesis
       const metalProduction = stellarDeathRate * 1e-14;
       cs.metallicity = this._clamp(cs.metallicity + metalProduction, 0, 1);
       
-      // Milestone: Population I stars (metal-rich)
       if (cs.metallicity > 0.1 && !this.milestones.stellarPopulationI) {
-        this._recordMilestone(
-          'stellarPopulationI',
-          "Population I Stars", 
-          "Metal-rich stars capable of forming rocky planets"
-        );
+        this._recordMilestone('stellarPopulationI', "Population I Stars", 
+          "Metal-rich stars capable of forming rocky planets");
       }
     }
 
-    // ==================== BLACK HOLE FORMATION ====================
+    // Black hole formation
     if (cs.starCount > 0) {
       const massiveStarFraction = 1e-4;
       const bhFormationRate = 0.1;
       const newBHs = cs.starCount * massiveStarFraction * bhFormationRate * (dt / 1e9);
       cs.blackHoleCount = Math.max(0, cs.blackHoleCount + newBHs);
     }
-
-    // ==================== PERIODIC STATUS LOG ====================
-    // Log every 100 million years
-    if (Math.floor(age / 1e8) !== Math.floor((age - dt) / 1e8)) {
-      console.log(`📊 STRUCTURES [${ageGyr.toFixed(2)} Gyr]:`, {
-        galaxies: cs.galaxyCount.toExponential(2),
-        stars: cs.starCount.toExponential(2),
-        blackHoles: cs.blackHoleCount.toExponential(2),
-        metallicity: (cs.metallicity * 100).toFixed(1) + '%',
-        phase: cs.cosmicPhase
-      });
-    }
   }
 
   _recordMilestone(milestoneKey, title, description) {
-    // CRITICAL: Only record if milestone hasn't been achieved yet
-    if (this.milestones[milestoneKey]) {
-      return; // Already recorded, skip
-    }
+    if (this.milestones[milestoneKey]) return;
     
-    // Set milestone flag FIRST to prevent duplicates
     this.milestones[milestoneKey] = true;
     
-    // IMPORTANT: Mark milestones as modified for Mongoose
     if (typeof this.universe.markModified === "function"){
       this.universe.markModified('milestones');
     }
     
-    
-    // Then record the event
     this._recordSignificantEvent("milestone", `MILESTONE: ${title}`, { 
       description,
-      milestoneKey // Add key for reference
+      milestoneKey
     });
     
     console.log(`🎯 MILESTONE ACHIEVED: ${title} (${milestoneKey})`);
   }
 
   _recordSignificantEvent(type, description, effects) {
-    // Limit events to prevent memory bloat
     if (this.universe.significantEvents.length > 2000) {
       this.universe.significantEvents.splice(0, 500);
     }
@@ -353,17 +293,16 @@ class PhysicsEngine {
     const dt = this.options.timeStepYears;
     const ageGyr = age / 1e9;
 
-    // No life before heavy elements
     if (ageGyr < 1 || cs.metallicity < 0.01) return;
 
-    // Habitable systems depend on metallicity and stellar maturity
+    // Habitable systems
     const metallicityFactor = this._clamp(cs.metallicity / 0.3, 0, 1);
     const maturityFactor = Math.min(1, (ageGyr - 1) / 3);
     const habitableFraction = 0.001 + metallicityFactor * maturityFactor * 0.015;
     
     cs.habitableSystemsCount = Math.max(0, cs.starCount * habitableFraction);
 
-    // Life emergence requires time + suitable conditions
+    // Life emergence
     if (ageGyr > 3 && cs.habitableSystemsCount > 100) {
       const timeFactor = this._clamp((ageGyr - 3) / 5, 0, 1);
       const temperatureFactor = this._getTemperatureSuitability();
@@ -372,72 +311,311 @@ class PhysicsEngine {
       const deltaLife = cs.habitableSystemsCount * lifeProbPerHabitable * (dt / 1e8);
       cs.lifeBearingPlanetsCount = Math.max(0, cs.lifeBearingPlanetsCount + deltaLife);
       
-      // Milestone: First life
       if (cs.lifeBearingPlanetsCount >= 1 && !this.milestones.firstLife) {
-        this._recordMilestone(
-          'firstLife',
-          "Abiogenesis Event", 
-          "Life has emerged in the universe"
-        );
+        this._recordMilestone('firstLife', "Abiogenesis Event", 
+          "Life has emerged in the universe");
       }
       
-      // Milestone: Complex life era
       if (cs.lifeBearingPlanetsCount > 1000 && !this.milestones.complexLifeEra) {
-        this._recordMilestone(
-          'complexLifeEra',
-          "Complex Life Era", 
-          "Complex multicellular life is widespread"
-        );
+        this._recordMilestone('complexLifeEra', "Complex Life Era", 
+          "Complex multicellular life is widespread");
       }
     }
 
-    // Civilization emergence
-    if (ageGyr > 5 && cs.lifeBearingPlanetsCount > 1000) {
-      const civProb = 1e-7 * (1 + cs.metallicity * 0.5);
-      const expectedCivs = Math.floor(cs.lifeBearingPlanetsCount * civProb);
+    // ==================== CIVILIZATION MANAGEMENT ====================
+    this._manageCivilizations(ageGyr, dt);
+  }
+
+  _manageCivilizations(ageGyr, dt) {
+    const cs = this.universe.currentState;
+    
+    if (ageGyr < 5 || cs.lifeBearingPlanetsCount < 1000) return;
+
+    // 1. CALCULATE EXPECTED CIVILIZATIONS (not actual spawning)
+    const civProb = 1e-7 * (1 + cs.metallicity * 0.5);
+    const expectedCivs = Math.floor(cs.lifeBearingPlanetsCount * civProb);
+    
+    // 2. ENFORCE HARD CAP
+    const activeCivs = this.universe.civilizations.filter(c => !c.extinct).length;
+    const maxCivs = this.options.maxCivilizations;
+    
+    // 3. SPAWN NEW CIVILIZATIONS (only if under cap and needed)
+    if (expectedCivs > cs.civilizationCount && activeCivs < maxCivs) {
+      const needToAdd = Math.min(
+        expectedCivs - cs.civilizationCount,
+        maxCivs - activeCivs,
+        10 // Max 10 per step to prevent spam
+      );
       
-      if (expectedCivs > cs.civilizationCount) {
-        const add = Math.min(expectedCivs - cs.civilizationCount, 50);
-        cs.civilizationCount = expectedCivs;
-        
-        for (let i = 0; i < add; i++) {
-          const civType = this._determineCivilizationType(age);
-          this.universe.civilizations.push({
-            id: `civ_${Date.now()}_${i}`,
-            type: civType,
-            createdAt: new Date(),
-            age: 0,
-            developmentLevel: this._rand(),
-            technology: this._rand() * 10,
-            stability: 0.5 + this._rand() * 0.5
-          });
-        }
-        
-        // Milestone: First civilization
-        if (cs.civilizationCount >= 1 && !this.milestones.firstCivilization) {
-          this._recordMilestone(
-            'firstCivilization',
-            "First Civilization", 
-            "Intelligent civilization has emerged"
-          );
-        }
-        
-        // Milestone: Technological singularity (Type 1+)
-        const advancedCivs = this.universe.civilizations.filter(c => 
-          c.type !== "Type0"
-        ).length;
-        if (advancedCivs > 0 && !this.milestones.technologicalSingularity) {
-          this._recordMilestone(
-            'technologicalSingularity',
-            "Technological Singularity", 
-            "Advanced civilizations have transcended planetary boundaries"
-          );
-        }
+      if (needToAdd > 0) {
+        this._spawnCivilizations(needToAdd, ageGyr);
+        cs.civilizationCount += needToAdd;
+        cs.civilizationsCreated = (cs.civilizationsCreated || 0) + needToAdd;
       }
     }
     
-    // Evolve existing civilizations
-    this._evolveCivilizations(dt);
+    // 4. EVOLVE EXISTING CIVILIZATIONS
+    this._evolveCivilizations(dt, ageGyr);
+    
+    // 5. PERIODIC CULLING (natural attrition)
+    this.stepsSinceLastCull++;
+    if (this.stepsSinceLastCull >= this.options.civilizationCullInterval) {
+      this._cullCivilizations();
+      this.stepsSinceLastCull = 0;
+    }
+    
+    // 6. CATASTROPHIC EVENTS (rare mass extinctions)
+    this._checkCatastrophicEvents(ageGyr);
+  }
+
+  _spawnCivilizations(count, ageGyr) {
+    for (let i = 0; i < count; i++) {
+      const civType = this._determineCivilizationType(ageGyr);
+      
+      this.universe.civilizations.push({
+        id: `civ_${Date.now()}_${this._rand().toString(36).substr(2, 9)}`,
+        type: civType,
+        createdAt: new Date(),
+        age: 0,
+        developmentLevel: this._rand(),
+        technology: this._rand() * 10,
+        stability: 0.5 + this._rand() * 0.5,
+        population: Math.floor(1e6 + this._rand() * 1e9),
+        resourceDepletion: 0,
+        warlikeness: this._rand(),
+        extinct: false
+      });
+    }
+    
+    const cs = this.universe.currentState;
+    
+    // Milestone: First civilization
+    if (cs.civilizationCount >= 1 && !this.milestones.firstCivilization) {
+      this._recordMilestone('firstCivilization', "First Civilization", 
+        "Intelligent civilization has emerged");
+    }
+  }
+
+  _evolveCivilizations(dt, ageGyr) {
+    const cs = this.universe.currentState;
+    
+    for (const civ of this.universe.civilizations) {
+      if (civ.extinct) continue;
+      
+      civ.age += dt;
+      
+      // Technology advancement
+      const techGrowth = 0.01 * (dt / 1e8) * (1 + civ.developmentLevel);
+      civ.technology = Math.min(100, civ.technology + techGrowth);
+      
+      // Resource depletion (increases with technology)
+      civ.resourceDepletion = Math.min(1, civ.resourceDepletion + techGrowth * 0.005);
+      
+      // Type progression
+      if (civ.technology > 20 && civ.type === "Type0" && this._rand() < 0.001) {
+        civ.type = "Type1";
+        this._recordSignificantEvent("civilization", "Type I Civilization Achieved", {
+          civilizationId: civ.id,
+          description: "A civilization has achieved planetary energy mastery"
+        });
+      } else if (civ.technology > 50 && civ.type === "Type1" && this._rand() < 0.0001) {
+        civ.type = "Type2";
+        this._recordSignificantEvent("civilization", "Type II Civilization Achieved", {
+          civilizationId: civ.id,
+          description: "A civilization has achieved stellar energy mastery"
+        });
+      } else if (civ.technology > 80 && civ.type === "Type2" && this._rand() < 0.00001) {
+        civ.type = "Type3";
+        this._recordSignificantEvent("civilization", "Type III Civilization Achieved", {
+          civilizationId: civ.id,
+          description: "A civilization has achieved galactic energy mastery"
+        });
+        
+        if (!this.milestones.transcendence) {
+          this._recordMilestone('transcendence', "Transcendence", 
+            "A civilization has transcended to Type III status");
+        }
+      }
+      
+      // Stability fluctuations
+      const stabilityChange = this._gaussianRandom(0, 0.01);
+      
+      // Resource pressure reduces stability
+      const resourcePressure = -civ.resourceDepletion * 0.02;
+      
+      // War-like civilizations are less stable
+      const warPressure = -civ.warlikeness * 0.01;
+      
+      civ.stability += stabilityChange + resourcePressure + warPressure;
+      civ.stability = this._clamp(civ.stability, 0, 1);
+      
+      // EXTINCTION EVENTS
+      const extinctionChance = this._calculateExtinctionRisk(civ, cs);
+      
+      if (this._rand() < extinctionChance) {
+        civ.extinct = true;
+        civ.extinctionDate = new Date();
+        civ.extinctionAge = civ.age;
+        
+        cs.civilizationsExtinct = (cs.civilizationsExtinct || 0) + 1;
+        cs.civilizationCount = Math.max(0, cs.civilizationCount - 1);
+        
+        const extinctionType = this._determineExtinctionType(civ);
+        
+        this._recordSignificantEvent("extinction", `Civilization Extinction: ${extinctionType}`, {
+          civilizationId: civ.id,
+          type: civ.type,
+          age: civ.age,
+          technology: civ.technology,
+          cause: extinctionType
+        });
+        
+        console.log(`💀 Civilization extinct: ${civ.type} (${extinctionType}) after ${(civ.age / 1e6).toFixed(1)}M years`);
+      }
+    }
+    
+    // Check for technological singularity milestone
+    const advancedCivs = this.universe.civilizations.filter(c => 
+      !c.extinct && c.type !== "Type0"
+    ).length;
+    
+    if (advancedCivs > 0 && !this.milestones.technologicalSingularity) {
+      this._recordMilestone('technologicalSingularity', "Technological Singularity", 
+        "Advanced civilizations have transcended planetary boundaries");
+    }
+  }
+
+  _calculateExtinctionRisk(civ, cosmicState) {
+    let baseRisk = 1e-5; // 0.001% per step
+    
+    // Low stability increases risk dramatically
+    if (civ.stability < 0.3) {
+      baseRisk *= (1 - civ.stability) * 50;
+    } else if (civ.stability < 0.1) {
+      baseRisk *= 100; // Almost certain extinction
+    }
+    
+    // Resource depletion is dangerous
+    if (civ.resourceDepletion > 0.8) {
+      baseRisk *= 20;
+    }
+    
+    // War-like civilizations destroy themselves
+    if (civ.warlikeness > 0.8) {
+      baseRisk *= 10;
+    }
+    
+    // Type 0 civilizations are most vulnerable
+    if (civ.type === "Type0") {
+      baseRisk *= 5;
+    } else if (civ.type === "Type3") {
+      baseRisk *= 0.1; // Type 3 civilizations are resilient
+    }
+    
+    // Cosmic instability affects everyone
+    if (cosmicState.stabilityIndex < 0.5) {
+      baseRisk *= (1 - cosmicState.stabilityIndex) * 3;
+    }
+    
+    // Age factor: very young and very old civilizations are at risk
+    const ageMillions = civ.age / 1e6;
+    if (ageMillions < 10) {
+      baseRisk *= 2; // Young civilizations are fragile
+    } else if (ageMillions > 1000) {
+      baseRisk *= 1.5; // Old civilizations face stagnation
+    }
+    
+    return Math.min(baseRisk, 0.5); // Cap at 50% per step
+  }
+
+  _determineExtinctionType(civ) {
+    const r = this._rand();
+    
+    if (civ.stability < 0.2) {
+      return r < 0.5 ? "Nuclear War" : "Civil Collapse";
+    }
+    
+    if (civ.resourceDepletion > 0.8) {
+      return "Resource Exhaustion";
+    }
+    
+    if (civ.warlikeness > 0.8) {
+      return "Self-Destruction";
+    }
+    
+    if (r < 0.3) return "Pandemic";
+    if (r < 0.5) return "Climate Catastrophe";
+    if (r < 0.7) return "Asteroid Impact";
+    if (r < 0.85) return "AI Singularity Failure";
+    return "Unknown Event";
+  }
+
+  _cullCivilizations() {
+    const before = this.universe.civilizations.length;
+    
+    // Remove extinct civilizations (keep last 100 for history)
+    const extinctCivs = this.universe.civilizations.filter(c => c.extinct);
+    const activeCivs = this.universe.civilizations.filter(c => !c.extinct);
+    
+    // Keep most recent 100 extinct civilizations for record-keeping
+    const recentExtinct = extinctCivs
+      .sort((a, b) => b.extinctionDate - a.extinctionDate)
+      .slice(0, 100);
+    
+    this.universe.civilizations = [...activeCivs, ...recentExtinct];
+    
+    const removed = before - this.universe.civilizations.length;
+    
+    if (removed > 0) {
+      console.log(`🧹 Culled ${removed} ancient extinct civilizations (keeping ${recentExtinct.length} recent)`);
+      
+      if (typeof this.universe.markModified === "function") {
+        this.universe.markModified('civilizations');
+      }
+    }
+  }
+
+  _checkCatastrophicEvents(ageGyr) {
+    const cs = this.universe.currentState;
+    
+    // Great Filter event (rare mass extinction)
+    if (this._rand() < 1e-6 && !this.milestones.greatFilter) {
+      const activeCivs = this.universe.civilizations.filter(c => !c.extinct);
+      const killCount = Math.floor(activeCivs.length * (0.5 + this._rand() * 0.4));
+      
+      if (killCount > 10) {
+        // Kill a percentage of civilizations
+        const toKill = activeCivs.slice(0, killCount);
+        
+        for (const civ of toKill) {
+          civ.extinct = true;
+          civ.extinctionDate = new Date();
+          civ.extinctionAge = civ.age;
+          cs.civilizationsExtinct = (cs.civilizationsExtinct || 0) + 1;
+          cs.civilizationCount = Math.max(0, cs.civilizationCount - 1);
+        }
+        
+        this._recordMilestone('greatFilter', "The Great Filter", 
+          `A cosmic catastrophe has destroyed ${killCount} civilizations`);
+        
+        this._recordSignificantEvent("catastrophe", "Great Filter Event", {
+          civilizationsDestroyed: killCount,
+          description: "A universe-wide catastrophic event has caused mass extinction"
+        });
+        
+        console.log(`☠️  GREAT FILTER: ${killCount} civilizations destroyed`);
+      }
+    }
+  }
+
+  _determineCivilizationType(ageGyr) {
+    const r = this._rand();
+    
+    if (ageGyr < 8) return "Type0";
+    if (r < 0.98) return "Type0";
+    if (r < 0.998) return "Type1";
+    if (r < 0.9998) return "Type2";
+    return "Type3";
   }
 
   _deduplicateMilestones() {
@@ -446,14 +624,12 @@ class PhysicsEngine {
     
     for (const event of this.universe.significantEvents) {
       if (event.type === 'milestone') {
-        // Extract milestone key from description
         const milestoneText = event.description.replace('MILESTONE: ', '');
         
         if (!seenMilestones.has(milestoneText)) {
           seenMilestones.add(milestoneText);
           uniqueEvents.push(event);
           
-          // Map milestone description to milestone key and mark as achieved
           const milestoneKeyMap = {
             'First Galaxy Formation': 'firstGalaxy',
             'First Star Ignition': 'firstStar',
@@ -461,7 +637,9 @@ class PhysicsEngine {
             'Abiogenesis Event': 'firstLife',
             'Complex Life Era': 'complexLifeEra',
             'First Civilization': 'firstCivilization',
-            'Technological Singularity': 'technologicalSingularity'
+            'Technological Singularity': 'technologicalSingularity',
+            'The Great Filter': 'greatFilter',
+            'Transcendence': 'transcendence'
           };
           
           const milestoneKey = milestoneKeyMap[milestoneText];
@@ -482,58 +660,12 @@ class PhysicsEngine {
         this.universe.markModified('significantEvents');
         this.universe.markModified('milestones');
       }
-      
     }
-  }
-
-  _evolveCivilizations(dt) {
-    for (const civ of this.universe.civilizations) {
-      civ.age += dt;
-      
-      // Technology advancement
-      const techGrowth = 0.01 * (dt / 1e8) * (1 + civ.developmentLevel);
-      civ.technology = Math.min(100, civ.technology + techGrowth);
-      
-      // Type progression
-      if (civ.technology > 20 && civ.type === "Type0" && this._rand() < 0.001) {
-        civ.type = "Type1";
-      } else if (civ.technology > 50 && civ.type === "Type1" && this._rand() < 0.0001) {
-        civ.type = "Type2";
-      } else if (civ.technology > 80 && civ.type === "Type2" && this._rand() < 0.00001) {
-        civ.type = "Type3";
-      }
-      
-      // Stability fluctuations
-      civ.stability += this._gaussianRandom(0, 0.01);
-      civ.stability = this._clamp(civ.stability, 0, 1);
-      
-      // Extinction events (rare)
-      if (civ.stability < 0.1 && this._rand() < 0.0001) {
-        civ.extinct = true;
-      }
-    }
-    
-    // Remove extinct civilizations occasionally
-    if (this._rand() < 0.01) {
-      this.universe.civilizations = this.universe.civilizations.filter(c => !c.extinct);
-    }
-  }
-
-  _determineCivilizationType(age) {
-    const r = this._rand();
-    const ageGyr = age / 1e9;
-    
-    if (ageGyr < 8) return "Type0";
-    if (r < 0.98) return "Type0";
-    if (r < 0.998) return "Type1";
-    if (r < 0.9998) return "Type2";
-    return "Type3";
   }
 
   _updateStability() {
     const cs = this.universe.currentState;
 
-    // Component factors (0 to 1 scale)
     const entropyFactor = this._calculateEntropyFactor();
     const structureFactor = this._calculateStructureFactor();
     const darkEnergyFactor = this._calculateDarkEnergyFactor();
@@ -541,7 +673,6 @@ class PhysicsEngine {
     const anomalyFactor = this._calculateAnomalyFactor();
     const energyFactor = cs.energyBudget;
 
-    // Weighted stability calculation
     let rawStability = 
       0.15 * entropyFactor +
       0.25 * structureFactor +
@@ -550,19 +681,16 @@ class PhysicsEngine {
       0.20 * anomalyFactor +
       0.10 * energyFactor;
 
-    // Apply difficulty modifier (MORE FORGIVING)
     const diffMod = this.options.difficultyModifier ?? 1.0;
     rawStability = rawStability * (0.6 + 0.4 / diffMod);
 
     cs.stabilityIndex = this._clamp(rawStability, 0, 1);
     
-    // Track stability history
     this.stabilityHistory.push(cs.stabilityIndex);
     if (this.stabilityHistory.length > this.maxHistoryLength) {
       this.stabilityHistory.shift();
     }
 
-    // Update metrics
     this.universe.metrics.stabilityScore = cs.stabilityIndex;
     this.universe.metrics.stabilityTrend = this._calculateStabilityTrend();
     this.universe.metrics.complexityIndex = this._calculateComplexityIndex();
@@ -598,7 +726,6 @@ class PhysicsEngine {
     const totalDensity = matterDensity + darkEnergyDensity;
     const deFraction = darkEnergyDensity / Math.max(1e-12, totalDensity);
     
-    // only problematic when dark energy HEAVILY dominates (>95%)
     if (deFraction < 0.95) return 1.0;
     return Math.max(0, 1 - Math.pow((deFraction - 0.95) / 0.05, 2));
   }
@@ -709,6 +836,9 @@ class PhysicsEngine {
     const cs = this.universe.currentState;
     const ageGyr = cs.age / 1e9;
     
+    const activeCivs = this.universe.civilizations.filter(c => !c.extinct).length;
+    const extinctCivs = this.universe.civilizations.filter(c => c.extinct).length;
+    
     return {
       ageYears: cs.age,
       ageGyr: ageGyr.toFixed(3),
@@ -730,7 +860,10 @@ class PhysicsEngine {
       habitableSystems: this._formatLargeNumber(cs.habitableSystemsCount),
       lifeBearingPlanets: this._formatLargeNumber(cs.lifeBearingPlanetsCount),
       civilizations: cs.civilizationCount,
-      advancedCivilizations: this.universe.civilizations.filter(c => c.type !== "Type0").length,
+      civilizationsActive: activeCivs,
+      civilizationsExtinct: extinctCivs,
+      civilizationsCreated: cs.civilizationsCreated || 0,
+      advancedCivilizations: this.universe.civilizations.filter(c => !c.extinct && c.type !== "Type0").length,
       
       // Stability & Health
       stability: (cs.stabilityIndex * 100).toFixed(2) + "%",
@@ -766,9 +899,33 @@ class PhysicsEngine {
     return "declining rapidly";
   }
 
-  // Get stability history for end condition checking
   getStabilityHistory() {
     return this.stabilityHistory;
+  }
+
+  // NEW: Get civilization statistics
+  getCivilizationStats() {
+    const civs = this.universe.civilizations;
+    const active = civs.filter(c => !c.extinct);
+    
+    return {
+      total: civs.length,
+      active: active.length,
+      extinct: civs.filter(c => c.extinct).length,
+      byType: {
+        type0: active.filter(c => c.type === "Type0").length,
+        type1: active.filter(c => c.type === "Type1").length,
+        type2: active.filter(c => c.type === "Type2").length,
+        type3: active.filter(c => c.type === "Type3").length
+      },
+      averageAge: active.length > 0 
+        ? active.reduce((sum, c) => sum + c.age, 0) / active.length / 1e6 
+        : 0,
+      averageStability: active.length > 0
+        ? active.reduce((sum, c) => sum + c.stability, 0) / active.length
+        : 0,
+      mostAdvanced: active.sort((a, b) => b.technology - a.technology)[0] || null
+    };
   }
 }
 
