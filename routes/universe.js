@@ -40,7 +40,7 @@ function difficultyOptions(difficulty) {
 // Get all universes
 router.get("/", async (req, res) => {
   try {
-    const universes = await Universe.find()
+    const universes = await Universe.find({userID: req.user.id})
       .select('-anomalies -significantEvents -civilizations')
       .lean();
     
