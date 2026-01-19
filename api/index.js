@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const mongoose = require("mongoose");
+const { inject } = require("@vercel/analytics");
 
 dotenv.config();
 
@@ -26,6 +27,14 @@ async function connectDB() {
 }
 
 const app = express();
+
+// Initialize Vercel Analytics
+try {
+  inject();
+} catch (err) {
+  console.warn("Vercel Analytics initialization warning:", err.message);
+}
+
 app.use(cors());
 app.use(express.json());
 
