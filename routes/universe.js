@@ -40,33 +40,14 @@ function difficultyOptions(difficulty) {
 // Get all universes
 router.get("/", async (req, res) => {
   try {
-    // Debug: Check if user is authenticated
-    if (!req.user || !req.user.id) {
-      console.error("Authentication error: req.user =", req.user);
-      return res.status(401).json({ 
-        ok: false, 
-        error: "User not authenticated" 
-      });
-    }
-
-    console.log("Fetching universes for user:", req.user.id);
-
-    // Filter by the logged-in user's ID
-    const universes = await Universe.find({ userId: req.user.id })
+    const universes = await Universe.find({userId: req.user.id})
       .select('-anomalies -significantEvents -civilizations')
       .lean();
-    
-    console.log(`Found ${universes.length} universes for user ${req.user.id}`);
     
     return res.json({ ok: true, universes });
   } catch (err) {
     console.error("Get universes error:", err);
-    console.error("Error stack:", err.stack);
-    return res.status(500).json({ 
-      ok: false, 
-      error: "Server error",
-      details: process.env.NODE_ENV === 'development' ? err.message : undefined
-    });
+    return res.status(500).json({ ok: false, error: "Server error" });
   }
 });
 
