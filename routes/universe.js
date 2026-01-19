@@ -73,6 +73,7 @@ router.post("/", async (req, res) => {
     };
 
     const uni = new Universe({
+      userId: req.user.id,
       name: name || `Universe-${Date.now()}`,
       seed: seed || Math.random().toString(36).slice(2),
       difficulty: selectedDifficulty,

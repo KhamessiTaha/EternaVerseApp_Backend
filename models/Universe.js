@@ -98,6 +98,11 @@ const MetricsSchema = new Schema({
 }, { _id: false });
 
 const UniverseSchema = new Schema({
+  userId: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: "User", 
+    required: true 
+  },
   name: { type: String, required: true, trim: true, index: true },
   seed: { 
     type: String, 
