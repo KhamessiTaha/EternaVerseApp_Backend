@@ -1,10 +1,13 @@
 const express = require("express");
 const router = express.Router();
+const verifyToken = require("../middleware/authMiddleware");
 const PhysicsEngine = require("../utils/physicsEngine");
 const AnomalyGenerator = require("../utils/anomalyGenerator");
 const EndConditions = require("../utils/endConditions");
 const MLPredictor = require("../utils/mlPredictor");
 const Universe = require("../models/Universe");
+
+router.use(verifyToken);
 
 // Difficulty configuration
 function difficultyOptions(difficulty) {
