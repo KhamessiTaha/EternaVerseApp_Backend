@@ -76,6 +76,8 @@ const CurrentStateSchema = new Schema({
   habitableSystemsCount: { type: Number, default: 0, min: 0 },
   lifeBearingPlanetsCount: { type: Number, default: 0, min: 0 },
   civilizationCount: { type: Number, default: 0, min: 0 },
+  civilizationsCreated: { type: Number, default: 0, min: 0 },
+  civilizationsExtinct: { type: Number, default: 0, min: 0 },
   metallicity: { type: Number, default: 0, min: 0, max: 1 },
   cosmicPhase: { 
     type: String, 
@@ -121,6 +123,10 @@ const UniverseSchema = new Schema({
     initialTemperature: { type: Number, default: 2.725 }
   },
   currentState: { type: CurrentStateSchema, default: () => ({}) },
+  lastPlayerPosition: {
+    x: { type: Number, default: 0 },
+    y: { type: Number, default: 0 }
+  },
   anomalies: { type: [AnomalySchema], default: [] },
   civilizations: { type: [CivilisationSchema], default: [] },
   significantEvents: { type: [SignificantEventSchema], default: [] },

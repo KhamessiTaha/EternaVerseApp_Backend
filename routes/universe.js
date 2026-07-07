@@ -163,6 +163,19 @@ router.post("/:id/simulate", async (req, res) => {
     const baseGalaxies = 2e11;
     uni.constants.observableGalaxies = baseGalaxies * diffOpts.observableGalaxiesMultiplier;
 
+    // Player position drives where anomalies spawn - persist whatever the
+    // client last reported, and fall back to that if this call doesn't send one
+    // (e.g. background simulation ticks fired without a fresh position).
+    const incomingPosition = req.body.playerPosition;
+    if (
+      incomingPosition &&
+      typeof incomingPosition.x === "number" &&
+      typeof incomingPosition.y === "number"
+    ) {
+      uni.lastPlayerPosition = { x: incomingPosition.x, y: incomingPosition.y };
+    }
+    const playerPosition = uni.lastPlayerPosition || { x: 0, y: 0 };
+
     // Build options with difficulty modifier
     const engineOptions = {
       timeStepYears: diffOpts.timeStepYears,
@@ -175,6 +188,7 @@ router.post("/:id/simulate", async (req, res) => {
       maxAnomalyPerStep: diffOpts.maxAnomalyPerStep,
       difficultyModifier: diffOpts.difficultyModifier,
       seed: uni.seed,
+      playerPosition,
       anomalyIdFactory: () => `${uni._id.toString()}_${Date.now()}_${Math.floor(Math.random()*1e6)}`
     };
 
