@@ -386,52 +386,56 @@ router.delete("/:id", async (req, res) => {
 // Resolve anomaly with modular architecture
 router.post("/:id/resolve-anomaly", async (req, res) => {
   try {
-    const { anomalyId } = req.body;
-    
+    const { anomalyId, accuracy } = req.body;
+
     if (!anomalyId) {
       return res.status(400).json({ ok: false, error: "anomalyId required" });
     }
 
     const uni = await Universe.findById(req.params.id);
-    
+
     if (!uni) {
       return res.status(404).json({ ok: false, error: "Universe not found" });
     }
 
     if (uni.status === "ended") {
-      return res.status(400).json({ 
-        ok: false, 
-        error: "Cannot resolve anomalies in ended universe" 
+      return res.status(400).json({
+        ok: false,
+        error: "Cannot resolve anomalies in ended universe"
       });
     }
 
     // Create anomaly generator to resolve
     const AnomalyGen = new AnomalyGenerator(uni, { seed: uni.seed });
-    
-    // Resolve anomaly
-    const result = AnomalyGen.resolveAnomaly(anomalyId);
-    
+
+    // Resolve anomaly - accuracy (0-100, from the minigame's performance grade)
+    // scales the reward; resolveAnomaly() clamps/validates it internally
+    const result = AnomalyGen.resolveAnomaly(anomalyId, accuracy);
+
     if (!result.success) {
-      return res.status(400).json({ 
-        ok: false, 
+      return res.status(400).json({
+        ok: false,
         error: result.reason
       });
     }
-    
+
 
     // Record event
     if (uni.significantEvents.length < 2000) {
+      const precisionNote = result.accuracy !== null ? ` at ${result.accuracy.toFixed(0)}% precision` : "";
       uni.significantEvents.push({
         timestamp: new Date(),
         age: uni.currentState.age,
         type: "anomaly_resolved",
-        description: `Resolved ${result.anomaly.type} anomaly (severity ${result.anomaly.severity})`,
-        effects: { 
-          anomalyId, 
+        description: `Resolved ${result.anomaly.type} anomaly (severity ${result.anomaly.severity})${precisionNote}`,
+        effects: {
+          anomalyId,
           category: result.anomaly.category,
-          severityResolved: result.anomaly.severity, 
+          severityResolved: result.anomaly.severity,
           stabilityBoost: result.stabilityBoost,
-          entropyReduction: result.entropyReduction
+          entropyReduction: result.entropyReduction,
+          performanceMultiplier: result.performanceMultiplier,
+          accuracy: result.accuracy
         },
         ageGyr: (uni.currentState.age / 1e9).toFixed(3)
       });
@@ -451,13 +455,15 @@ router.post("/:id/resolve-anomaly", async (req, res) => {
     const Physics = new PhysicsEngine(uni, { seed: uni.seed });
     const stats = Physics.getStatistics();
     
-    console.log(`✅ Resolved anomaly ${anomalyId} | Stability: ${stats.stability} (+${(result.stabilityBoost * 100).toFixed(2)}%)`);
+    console.log(`✅ Resolved anomaly ${anomalyId} | Stability: ${stats.stability} (+${(result.stabilityBoost * 100).toFixed(2)}%) | Performance: ${result.accuracy !== null ? result.accuracy.toFixed(0) + '%' : 'n/a'} (x${result.performanceMultiplier})`);
 
-    return res.json({ 
-      ok: true, 
+    return res.json({
+      ok: true,
       anomalyId,
       stabilityBoost: result.stabilityBoost,
       entropyReduction: result.entropyReduction,
+      performanceMultiplier: result.performanceMultiplier,
+      accuracy: result.accuracy,
       universe: uni,
       stats
     });

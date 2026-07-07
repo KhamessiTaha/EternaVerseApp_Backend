@@ -3,6 +3,26 @@ const seedrandom = require("seedrandom");
 const CHUNK_SIZE = 1000;
 const MAX_ANOMALIES_PER_UNIVERSE = 200; // Hard limit to prevent DB bloat
 
+// Mirrors the frontend's GRADE_TIERS (src/components/game/utils.js) so a
+// minigame grade means the same reward whether it's shown to the player or
+// applied server-side. If these ever diverge, that's a balance bug to fix,
+// not an API contract to enforce - the two codebases don't share a package.
+const PERFORMANCE_TIERS = [
+  { min: 95, multiplier: 1.3 },  // S
+  { min: 85, multiplier: 1.15 }, // A
+  { min: 70, multiplier: 1.0 },  // B
+  { min: 50, multiplier: 0.85 }, // C
+  { min: 0, multiplier: 0.5 },   // technically resolved, but sloppy - still some credit
+];
+
+function getPerformanceMultiplier(accuracy) {
+  // No accuracy reported (e.g. an older client) - don't penalize, full reward
+  if (typeof accuracy !== "number" || Number.isNaN(accuracy)) return 1.0;
+  const clamped = Math.max(0, Math.min(100, accuracy));
+  const tier = PERFORMANCE_TIERS.find((t) => clamped >= t.min) || PERFORMANCE_TIERS[PERFORMANCE_TIERS.length - 1];
+  return tier.multiplier;
+}
+
 class AnomalyGenerator {
   constructor(universe, options = {}) {
     if (!universe) throw new Error("AnomalyGenerator requires a universe object");
@@ -313,45 +333,49 @@ class AnomalyGenerator {
     }
   }
 
-  resolveAnomaly(anomalyId) {
+  resolveAnomaly(anomalyId, accuracy) {
     const anomaly = this.universe.anomalies.find(
       a => a.id === anomalyId || a._id?.toString() === anomalyId
     );
-    
+
     if (!anomaly || anomaly.resolved) {
       return { success: false, reason: "Anomaly not found or already resolved" };
     }
 
     anomaly.resolved = true;
     anomaly.resolvedAt = new Date();
-    
+
+    const performanceMultiplier = getPerformanceMultiplier(accuracy);
+
     const cs = this.universe.currentState;
-    
+
     const baseBoost = 0.015;
     const severityMultiplier = anomaly.severity;
-    const stabilityBoost = baseBoost * severityMultiplier;
-    
+    const stabilityBoost = baseBoost * severityMultiplier * performanceMultiplier;
+
     cs.stabilityIndex = this._clamp(cs.stabilityIndex + stabilityBoost, 0, 1);
-    
-    const entropyReduction = 3e6 * severityMultiplier;
+
+    const entropyReduction = 3e6 * severityMultiplier * performanceMultiplier;
     cs.entropy = Math.max(0, cs.entropy - entropyReduction);
-    
-    cs.energyBudget = this._clamp(cs.energyBudget + 0.002 * severityMultiplier, 0, 1);
-    
-    this.universe.metrics.playerInterventions = 
+
+    cs.energyBudget = this._clamp(cs.energyBudget + 0.002 * severityMultiplier * performanceMultiplier, 0, 1);
+
+    this.universe.metrics.playerInterventions =
       (this.universe.metrics.playerInterventions || 0) + 1;
-    this.universe.metrics.anomaliesResolved = 
+    this.universe.metrics.anomaliesResolved =
       (this.universe.metrics.anomaliesResolved || 0) + 1;
-    
+
     const totalAnomalies = this.universe.anomalies.length;
     const resolvedCount = this.universe.anomalies.filter(a => a.resolved).length;
-    this.universe.metrics.anomalyResolutionRate = 
+    this.universe.metrics.anomalyResolutionRate =
       totalAnomalies > 0 ? resolvedCount / totalAnomalies : 0;
-    
-    return { 
-      success: true, 
-      stabilityBoost, 
+
+    return {
+      success: true,
+      stabilityBoost,
       entropyReduction,
+      performanceMultiplier,
+      accuracy: typeof accuracy === "number" ? Math.max(0, Math.min(100, accuracy)) : null,
       anomaly 
     };
   }
