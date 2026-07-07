@@ -134,24 +134,49 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+// How much real-world time one simulation step represents. The universe
+// advances based on elapsed wall-clock time since it was last simulated,
+// not based on whether any client happens to be polling - so it keeps
+// aging (and catches up) even if nobody has the game open.
+const SECONDS_PER_STEP = 30;
+const MAX_STEPS = 100;
+
 // simulate N steps with modular architecture
 router.post("/:id/simulate", async (req, res) => {
   try {
-    const stepsRequested = Math.max(1, Math.floor(Number(req.body.steps || req.query.steps || 1)));
-    const MAX_STEPS = 100;
-    const steps = Math.min(stepsRequested, MAX_STEPS);
-
     const uni = await Universe.findById(req.params.id);
     if (!uni) {
       return res.status(404).json({ ok: false, error: "Universe not found" });
     }
-    
+
     if (uni.status === "ended") {
-      return res.status(400).json({ 
-        ok: false, 
+      return res.status(400).json({
+        ok: false,
         error: "Universe already ended",
         endCondition: uni.endCondition,
         endReason: uni.endReason
+      });
+    }
+
+    const now = new Date();
+    const lastSimulatedAt = uni.lastSimulatedAt || uni.lastModified || uni.createdAt || now;
+    const elapsedSeconds = Math.max(0, (now - lastSimulatedAt) / 1000);
+    const steps = Math.min(MAX_STEPS, Math.floor(elapsedSeconds / SECONDS_PER_STEP));
+
+    if (steps <= 0) {
+      // Not enough real time has passed for a full step yet - avoid
+      // re-running physics/anomalies/predictions for nothing.
+      const Physics = new PhysicsEngine(uni, { seed: uni.seed });
+      return res.json({
+        ok: true,
+        steps: 0,
+        skipped: true,
+        stats: Physics.getStatistics(),
+        createdAnomalies: [],
+        hasEnded: uni.status === "ended",
+        endCondition: uni.endCondition,
+        endReason: uni.endReason,
+        universe: uni
       });
     }
 
@@ -282,18 +307,19 @@ router.post("/:id/simulate", async (req, res) => {
     uni.markModified('currentState');
     uni.markModified('metrics');
 
-    // Update timestamp
-    uni.lastModified = new Date();
-    
+    // Update timestamps
+    uni.lastModified = now;
+    uni.lastSimulatedAt = now;
+
     // Save with error handling
     try {
       await uni.save();
     } catch (saveErr) {
       console.error("Save error:", saveErr);
-      return res.status(500).json({ 
-        ok: false, 
+      return res.status(500).json({
+        ok: false,
         error: "Failed to save simulation state",
-        details: saveErr.message 
+        details: saveErr.message
       });
     }
 

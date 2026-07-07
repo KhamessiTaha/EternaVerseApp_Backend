@@ -143,7 +143,8 @@ const UniverseSchema = new Schema({
   endReason: { type: String, default: null },
 
   createdAt: { type: Date, default: Date.now, index: true },
-  lastModified: { type: Date, default: Date.now, index: true }
+  lastModified: { type: Date, default: Date.now, index: true },
+  lastSimulatedAt: { type: Date, default: Date.now }
 }, {
   timestamps: false, // We handle timestamps manually
   minimize: false // Don't remove empty objects
