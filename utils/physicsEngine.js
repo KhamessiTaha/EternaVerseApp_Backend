@@ -837,8 +837,7 @@ class PhysicsEngine {
     const ageGyr = cs.age / 1e9;
     
     const activeCivs = this.universe.civilizations.filter(c => !c.extinct).length;
-    const extinctCivs = this.universe.civilizations.filter(c => c.extinct).length;
-    
+
     return {
       ageYears: cs.age,
       ageGyr: ageGyr.toFixed(3),
@@ -861,7 +860,7 @@ class PhysicsEngine {
       lifeBearingPlanets: this._formatLargeNumber(cs.lifeBearingPlanetsCount),
       civilizations: cs.civilizationCount,
       civilizationsActive: activeCivs,
-      civilizationsExtinct: extinctCivs,
+      civilizationsExtinct: cs.civilizationsExtinct || 0,
       civilizationsCreated: cs.civilizationsCreated || 0,
       advancedCivilizations: this.universe.civilizations.filter(c => !c.extinct && c.type !== "Type0").length,
       
