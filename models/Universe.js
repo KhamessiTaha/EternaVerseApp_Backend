@@ -29,7 +29,12 @@ const CivilisationSchema = new Schema({
   developmentLevel: { type: Number, default: 0, min: 0, max: 1 },
   technology: { type: Number, default: 0, min: 0, max: 100 },
   stability: { type: Number, default: 0.5, min: 0, max: 1 },
-  extinct: { type: Boolean, default: false }
+  population: { type: Number, default: 0, min: 0 },
+  resourceDepletion: { type: Number, default: 0, min: 0, max: 1 },
+  warlikeness: { type: Number, default: 0, min: 0, max: 1 },
+  extinct: { type: Boolean, default: false },
+  extinctionDate: { type: Date, default: null },
+  extinctionAge: { type: Number, default: null }
 }, { _id: false });
 
 const SignificantEventSchema = new Schema({
@@ -48,7 +53,9 @@ const MilestonesSchema = new Schema({
   firstCivilization: { type: Boolean, default: false },
   stellarPopulationI: { type: Boolean, default: false },
   complexLifeEra: { type: Boolean, default: false },
-  technologicalSingularity: { type: Boolean, default: false }
+  technologicalSingularity: { type: Boolean, default: false },
+  greatFilter: { type: Boolean, default: false },
+  transcendence: { type: Boolean, default: false }
 }, { _id: false });
 
 const ConstantsSchema = new Schema({

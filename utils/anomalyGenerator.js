@@ -201,31 +201,17 @@ class AnomalyGenerator {
     const activity = Math.min(1, cs.galaxyCount / Math.max(1, this.constants.observableGalaxies));
     const baseProb = this.options.anomalyProbabilityScale * activity;
 
-    console.log(`🎲 Anomaly generation check:`, {
-      ageGyr: ageGyr.toFixed(2),
-      galaxyCount: cs.galaxyCount.toExponential(2),
-      starCount: cs.starCount.toExponential(2),
-      activity: activity.toFixed(4),
-      baseProb: baseProb.toFixed(6),
-      existingAnomalies: this.universe.anomalies.length
-    });
-
     const anomalyTypes = this.getAnomalyTypes();
     const created = [];
     const cap = Math.max(1, Math.floor(this.options.maxAnomalyPerStep));
 
     for (const def of anomalyTypes) {
-      if (!def.condition(cs, ageGyr)) {
-        console.log(`   ❌ ${def.id}: condition not met`);
-        continue;
-      }
-      
+      if (!def.condition(cs, ageGyr)) continue;
+
       // Balanced probability: aims for 1-5% chance per eligible type per step
       const prob = def.probability * baseProb * 10000;
       const roll = this._rand();
-      
-      console.log(`   🎲 ${def.id}: prob=${prob.toFixed(6)}, roll=${roll.toFixed(6)}, ${roll < prob ? '✅ SPAWN' : '❌ skip'}`);
-      
+
       if (roll < prob) {
         const severity = 1 + Math.floor(this._rand() * 3);
         const effects = def.effects(severity);
@@ -268,12 +254,10 @@ class AnomalyGenerator {
 
     if (created.length > 0) {
       const playerChunk = this._getChunkCoords(this.options.playerPosition.x, this.options.playerPosition.y);
-      console.log(`✨ Generated ${created.length} anomalies near player chunk (${playerChunk.chunkX}, ${playerChunk.chunkY})`);
-      created.forEach(a => {
-        console.log(`   → ${a.type} (severity: ${a.severity}) at (${a.location.x.toFixed(0)}, ${a.location.y.toFixed(0)})`);
-      });
+      const summary = created.map(a => `${a.type} sev${a.severity}`).join(', ');
+      console.log(`✨ Generated ${created.length} anomalies near player chunk (${playerChunk.chunkX}, ${playerChunk.chunkY}): ${summary}`);
     }
-    
+
     return created;
   }
 

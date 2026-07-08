@@ -18,7 +18,10 @@ const verifyToken = (req, res, next) => {
     next();
   } catch (err) {
     console.error("Token verification failed:", err.message);
-    res.status(400).json({ message: "Invalid Token" });
+    // 401 (not 400): invalid/expired tokens are an auth failure. The frontend
+    // treats 401/403 as "session over, log out" - a 400 here would either be
+    // ignored or force the client to conflate validation errors with logout.
+    res.status(401).json({ message: "Invalid Token" });
   }
 };
 

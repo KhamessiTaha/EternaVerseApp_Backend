@@ -6,8 +6,43 @@ const AnomalyGenerator = require("../utils/anomalyGenerator");
 const EndConditions = require("../utils/endConditions");
 const MLPredictor = require("../utils/mlPredictor");
 const Universe = require("../models/Universe");
+const { recordEvent } = require("../utils/eventLog");
 
 router.use(verifyToken);
+
+/**
+ * Load a universe by id and verify it belongs to the authenticated user.
+ * Responds with 404 (and returns null) when missing OR owned by someone
+ * else - deliberately the same status for both, so universe ids can't be
+ * probed for existence.
+ *
+ * `select`, when provided, must include userId for the ownership check.
+ */
+async function findOwnedUniverse(req, res, { lean = false, select = null } = {}) {
+  let query = Universe.findById(req.params.id);
+  if (select) query = query.select(select);
+  if (lean) query = query.lean();
+
+  const uni = await query;
+
+  if (!uni || uni.userId?.toString() !== req.user.id) {
+    res.status(404).json({ ok: false, error: "Universe not found" });
+    return null;
+  }
+
+  return uni;
+}
+
+/**
+ * Simulation randomness must not replay the same sequence every request
+ * (seeding from uni.seed alone did exactly that - every /simulate call
+ * rolled identical numbers). Mixing in the universe's current age keeps it
+ * deterministic for a given state while advancing the sequence as the
+ * universe evolves.
+ */
+function simulationSeed(uni) {
+  return `${uni.seed}:${uni.currentState?.age ?? 0}`;
+}
 
 // Difficulty configuration
 function difficultyOptions(difficulty) {
@@ -125,8 +160,8 @@ router.post("/", async (req, res) => {
 // Get universe by ID
 router.get("/:id", async (req, res) => {
   try {
-    const uni = await Universe.findById(req.params.id).lean();
-    if (!uni) return res.status(404).json({ ok: false, error: "Universe not found" });
+    const uni = await findOwnedUniverse(req, res, { lean: true });
+    if (!uni) return;
     return res.json({ ok: true, universe: uni });
   } catch (err) {
     console.error("Get universe error:", err);
@@ -144,10 +179,8 @@ const MAX_STEPS = 100;
 // simulate N steps with modular architecture
 router.post("/:id/simulate", async (req, res) => {
   try {
-    const uni = await Universe.findById(req.params.id);
-    if (!uni) {
-      return res.status(404).json({ ok: false, error: "Universe not found" });
-    }
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
 
     if (uni.status === "ended") {
       return res.status(400).json({
@@ -166,7 +199,7 @@ router.post("/:id/simulate", async (req, res) => {
     if (steps <= 0) {
       // Not enough real time has passed for a full step yet - avoid
       // re-running physics/anomalies/predictions for nothing.
-      const Physics = new PhysicsEngine(uni, { seed: uni.seed });
+      const Physics = new PhysicsEngine(uni, { seed: simulationSeed(uni) });
       return res.json({
         ok: true,
         steps: 0,
@@ -202,17 +235,18 @@ router.post("/:id/simulate", async (req, res) => {
     const playerPosition = uni.lastPlayerPosition || { x: 0, y: 0 };
 
     // Build options with difficulty modifier
+    const stepSeed = simulationSeed(uni);
     const engineOptions = {
       timeStepYears: diffOpts.timeStepYears,
       difficultyModifier: diffOpts.difficultyModifier,
-      seed: uni.seed
+      seed: stepSeed
     };
 
     const anomalyOptions = {
       anomalyProbabilityScale: diffOpts.anomalyProbabilityScale,
       maxAnomalyPerStep: diffOpts.maxAnomalyPerStep,
       difficultyModifier: diffOpts.difficultyModifier,
-      seed: uni.seed,
+      seed: stepSeed,
       playerPosition,
       anomalyIdFactory: () => `${uni._id.toString()}_${Date.now()}_${Math.floor(Math.random()*1e6)}`
     };
@@ -247,18 +281,12 @@ router.post("/:id/simulate", async (req, res) => {
         // Apply anomaly effects to universe state
         for (const anomaly of newAnomalies) {
           AnomalyGen.applyAnomalyEffects(anomaly.effectsRaw);
-          
-          // Record event
-          if (uni.significantEvents.length < 2000) {
-            uni.significantEvents.push({
-              timestamp: new Date(),
-              age: uni.currentState.age,
-              type: anomaly.type,
-              description: anomaly.description,
-              effects: anomaly.effectsRaw,
-              ageGyr: (uni.currentState.age / 1e9).toFixed(3)
-            });
-          }
+
+          recordEvent(uni, {
+            type: anomaly.type,
+            description: anomaly.description,
+            effects: anomaly.effectsRaw
+          });
         }
         
         // Add to universe anomalies array
@@ -277,14 +305,9 @@ router.post("/:id/simulate", async (req, res) => {
       const hasEnded = EndChecker.checkEndConditions();
       
       if (hasEnded) {
-        // Record end event
-        uni.significantEvents.push({
-          timestamp: new Date(),
-          age: uni.currentState.age,
+        recordEvent(uni, {
           type: "universe_end",
-          description: uni.endReason,
-          effects: {},
-          ageGyr: (uni.currentState.age / 1e9).toFixed(3)
+          description: uni.endReason
         });
         break;
       }
@@ -366,11 +389,8 @@ router.post("/:id/simulate", async (req, res) => {
 // Delete a universe
 router.delete("/:id", async (req, res) => {
   try {
-    const uni = await Universe.findById(req.params.id);
-
-    if (!uni) {
-      return res.status(404).json({ ok: false, error: "Universe not found" });
-    }
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
 
     await uni.deleteOne();
 
@@ -392,11 +412,8 @@ router.post("/:id/resolve-anomaly", async (req, res) => {
       return res.status(400).json({ ok: false, error: "anomalyId required" });
     }
 
-    const uni = await Universe.findById(req.params.id);
-
-    if (!uni) {
-      return res.status(404).json({ ok: false, error: "Universe not found" });
-    }
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
 
     if (uni.status === "ended") {
       return res.status(400).json({
@@ -421,25 +438,20 @@ router.post("/:id/resolve-anomaly", async (req, res) => {
 
 
     // Record event
-    if (uni.significantEvents.length < 2000) {
-      const precisionNote = result.accuracy !== null ? ` at ${result.accuracy.toFixed(0)}% precision` : "";
-      uni.significantEvents.push({
-        timestamp: new Date(),
-        age: uni.currentState.age,
-        type: "anomaly_resolved",
-        description: `Resolved ${result.anomaly.type} anomaly (severity ${result.anomaly.severity})${precisionNote}`,
-        effects: {
-          anomalyId,
-          category: result.anomaly.category,
-          severityResolved: result.anomaly.severity,
-          stabilityBoost: result.stabilityBoost,
-          entropyReduction: result.entropyReduction,
-          performanceMultiplier: result.performanceMultiplier,
-          accuracy: result.accuracy
-        },
-        ageGyr: (uni.currentState.age / 1e9).toFixed(3)
-      });
-    }
+    const precisionNote = result.accuracy !== null ? ` at ${result.accuracy.toFixed(0)}% precision` : "";
+    recordEvent(uni, {
+      type: "anomaly_resolved",
+      description: `Resolved ${result.anomaly.type} anomaly (severity ${result.anomaly.severity})${precisionNote}`,
+      effects: {
+        anomalyId,
+        category: result.anomaly.category,
+        severityResolved: result.anomaly.severity,
+        stabilityBoost: result.stabilityBoost,
+        entropyReduction: result.entropyReduction,
+        performanceMultiplier: result.performanceMultiplier,
+        accuracy: result.accuracy
+      }
+    });
 
     // Mark arrays as modified
     uni.markModified('anomalies');
@@ -479,11 +491,8 @@ router.post("/:id/resolve-anomaly", async (req, res) => {
 // Get engine stats without mutating model
 router.get("/:id/stats", async (req, res) => {
   try {
-    const uni = await Universe.findById(req.params.id).lean();
-    
-    if (!uni) {
-      return res.status(404).json({ ok: false, error: "Universe not found" });
-    }
+    const uni = await findOwnedUniverse(req, res, { lean: true });
+    if (!uni) return;
 
     const Physics = new PhysicsEngine(uni, { seed: uni.seed });
     const stats = Physics.getStatistics();
@@ -498,13 +507,8 @@ router.get("/:id/stats", async (req, res) => {
 // Get all anomalies for a universe
 router.get("/:id/anomalies", async (req, res) => {
   try {
-    const uni = await Universe.findById(req.params.id)
-      .select('anomalies')
-      .lean();
-    
-    if (!uni) {
-      return res.status(404).json({ ok: false, error: "Universe not found" });
-    }
+    const uni = await findOwnedUniverse(req, res, { lean: true, select: 'anomalies userId' });
+    if (!uni) return;
 
     const anomalies = uni.anomalies || [];
     const active = anomalies.filter(a => !a.resolved);
@@ -530,11 +534,8 @@ router.get("/:id/anomalies", async (req, res) => {
 // Get ML predictions
 router.get("/:id/predictions", async (req, res) => {
   try {
-    const uni = await Universe.findById(req.params.id).lean();
-    
-    if (!uni) {
-      return res.status(404).json({ ok: false, error: "Universe not found" });
-    }
+    const uni = await findOwnedUniverse(req, res, { lean: true });
+    if (!uni) return;
 
     const Predictor = new MLPredictor(uni);
     const predictions = Predictor.generatePredictions();
@@ -549,11 +550,8 @@ router.get("/:id/predictions", async (req, res) => {
 // Get end condition status
 router.get("/:id/end-conditions", async (req, res) => {
   try {
-    const uni = await Universe.findById(req.params.id).lean();
-    
-    if (!uni) {
-      return res.status(404).json({ ok: false, error: "Universe not found" });
-    }
+    const uni = await findOwnedUniverse(req, res, { lean: true });
+    if (!uni) return;
 
     const diffOpts = difficultyOptions(uni.difficulty || "Intermediate");
     const EndChecker = new EndConditions(uni, {
@@ -574,12 +572,9 @@ router.get("/:id/end-conditions", async (req, res) => {
 router.post("/:id/cleanup-anomalies", async (req, res) => {
   try {
     const { keepRecentMinutes = 60 } = req.body;
-    
-    const uni = await Universe.findById(req.params.id);
-    
-    if (!uni) {
-      return res.status(404).json({ ok: false, error: "Universe not found" });
-    }
+
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
 
     const cutoffTime = Date.now() - keepRecentMinutes * 60 * 1000;
     const before = uni.anomalies.length;

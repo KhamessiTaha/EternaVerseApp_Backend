@@ -1,4 +1,5 @@
 const seedrandom = require("seedrandom");
+const { recordEvent } = require("./eventLog");
 
 /**
  * Enhanced PhysicsEngine with improved civilization lifecycle management
@@ -273,18 +274,7 @@ class PhysicsEngine {
   }
 
   _recordSignificantEvent(type, description, effects) {
-    if (this.universe.significantEvents.length > 2000) {
-      this.universe.significantEvents.splice(0, 500);
-    }
-    
-    this.universe.significantEvents.push({
-      timestamp: new Date(),
-      age: this.universe.currentState.age,
-      type,
-      description,
-      effects,
-      ageGyr: (this.universe.currentState.age / 1e9).toFixed(3)
-    });
+    recordEvent(this.universe, { type, description, effects });
   }
 
   _updateLifeEvolution() {
@@ -405,11 +395,13 @@ class PhysicsEngine {
       civ.age += dt;
       
       // Technology advancement
-      const techGrowth = 0.01 * (dt / 1e8) * (1 + civ.developmentLevel);
-      civ.technology = Math.min(100, civ.technology + techGrowth);
-      
-      // Resource depletion (increases with technology)
-      civ.resourceDepletion = Math.min(1, civ.resourceDepletion + techGrowth * 0.005);
+      const techGrowth = 0.01 * (dt / 1e8) * (1 + (civ.developmentLevel ?? 0));
+      civ.technology = Math.min(100, (civ.technology ?? 0) + techGrowth);
+
+      // Resource depletion (increases with technology). Coalesce: civs saved
+      // before these fields existed in the schema load without them, and
+      // undefined + n would poison the whole civ with NaN.
+      civ.resourceDepletion = Math.min(1, (civ.resourceDepletion ?? 0) + techGrowth * 0.005);
       
       // Type progression
       if (civ.technology > 20 && civ.type === "Type0" && this._rand() < 0.001) {
@@ -439,15 +431,14 @@ class PhysicsEngine {
       
       // Stability fluctuations
       const stabilityChange = this._gaussianRandom(0, 0.01);
-      
+
       // Resource pressure reduces stability
-      const resourcePressure = -civ.resourceDepletion * 0.02;
-      
+      const resourcePressure = -(civ.resourceDepletion ?? 0) * 0.02;
+
       // War-like civilizations are less stable
-      const warPressure = -civ.warlikeness * 0.01;
-      
-      civ.stability += stabilityChange + resourcePressure + warPressure;
-      civ.stability = this._clamp(civ.stability, 0, 1);
+      const warPressure = -(civ.warlikeness ?? 0) * 0.01;
+
+      civ.stability = this._clamp((civ.stability ?? 0.5) + stabilityChange + resourcePressure + warPressure, 0, 1);
       
       // EXTINCTION EVENTS
       const extinctionChance = this._calculateExtinctionRisk(civ, cs);
@@ -496,12 +487,12 @@ class PhysicsEngine {
     }
     
     // Resource depletion is dangerous
-    if (civ.resourceDepletion > 0.8) {
+    if ((civ.resourceDepletion ?? 0) > 0.8) {
       baseRisk *= 20;
     }
-    
+
     // War-like civilizations destroy themselves
-    if (civ.warlikeness > 0.8) {
+    if ((civ.warlikeness ?? 0) > 0.8) {
       baseRisk *= 10;
     }
     
@@ -558,8 +549,9 @@ class PhysicsEngine {
     const activeCivs = this.universe.civilizations.filter(c => !c.extinct);
     
     // Keep most recent 100 extinct civilizations for record-keeping
+    // (civs that went extinct before extinctionDate was persisted sort last)
     const recentExtinct = extinctCivs
-      .sort((a, b) => b.extinctionDate - a.extinctionDate)
+      .sort((a, b) => (b.extinctionDate?.getTime?.() ?? 0) - (a.extinctionDate?.getTime?.() ?? 0))
       .slice(0, 100);
     
     this.universe.civilizations = [...activeCivs, ...recentExtinct];
