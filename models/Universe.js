@@ -21,6 +21,27 @@ const AnomalySchema = new Schema({
   decayRate: { type: Number, default: 0 }
 }, { _id: false });
 
+const DiscoverySchema = new Schema({
+  id: { type: String, required: true, index: true },
+  name: { type: String },
+  category: { type: String, enum: ["galaxy", "nebula", "phenomenon", "anomaly"], required: true },
+  objectClass: { type: String, required: true },
+  rarity: { type: String, enum: ["common", "uncommon", "rare", "exceptional"], default: "common" },
+  researchValue: { type: Number, default: 0, min: 0 },
+  location: {
+    x: { type: Number, default: 0 },
+    y: { type: Number, default: 0 }
+  },
+  discoveredAt: { type: Date, default: Date.now }
+}, { _id: false });
+
+const ResearchSchema = new Schema({
+  points: { type: Number, default: 0, min: 0 },
+  totalEarned: { type: Number, default: 0, min: 0 },
+  discoveryCount: { type: Number, default: 0, min: 0 },
+  classesDiscovered: { type: [String], default: [] }
+}, { _id: false });
+
 const CivilisationSchema = new Schema({
   id: { type: String, required: true },
   type: { type: String, enum: ["Type0", "Type1", "Type2", "Type3"], default: "Type0" },
@@ -135,6 +156,8 @@ const UniverseSchema = new Schema({
     y: { type: Number, default: 0 }
   },
   anomalies: { type: [AnomalySchema], default: [] },
+  discoveries: { type: [DiscoverySchema], default: [] },
+  research: { type: ResearchSchema, default: () => ({}) },
   civilizations: { type: [CivilisationSchema], default: [] },
   significantEvents: { type: [SignificantEventSchema], default: [] },
   milestones: { type: MilestonesSchema, default: () => ({}) },

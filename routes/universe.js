@@ -7,6 +7,7 @@ const EndConditions = require("../utils/endConditions");
 const MLPredictor = require("../utils/mlPredictor");
 const Universe = require("../models/Universe");
 const { recordEvent } = require("../utils/eventLog");
+const { prepareDiscoveries } = require("../utils/discoveryValidator");
 
 router.use(verifyToken);
 
@@ -485,6 +486,71 @@ router.post("/:id/resolve-anomaly", async (req, res) => {
       ok: false, 
       error: err.message || "Failed to resolve anomaly" 
     });
+  }
+});
+
+// Record scan discoveries. Duplicates/rejections are NOT errors (200):
+// clients retry after lost acks and the server must stay idempotent.
+// Research value is computed server-side (utils/researchValues.js) - the
+// client only reports WHAT was scanned, never what it is worth.
+const MAX_DISCOVERIES_PER_BATCH = 20;
+const MAX_DISCOVERIES_STORED = 1000;
+
+router.post("/:id/discoveries", async (req, res) => {
+  try {
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    const raw = Array.isArray(req.body.discoveries)
+      ? req.body.discoveries.slice(0, MAX_DISCOVERIES_PER_BATCH)
+      : [];
+
+    const { accepted, duplicates, rejected } = prepareDiscoveries(uni, raw);
+
+    if (accepted.length > 0) {
+      uni.discoveries.push(...accepted);
+      // Evict oldest past the cap; counters below survive eviction.
+      if (uni.discoveries.length > MAX_DISCOVERIES_STORED) {
+        uni.discoveries.splice(0, uni.discoveries.length - MAX_DISCOVERIES_STORED);
+      }
+
+      const earned = accepted.reduce((sum, d) => sum + d.researchValue, 0);
+      if (!uni.research) uni.research = {};
+      uni.research.points = (uni.research.points || 0) + earned;
+      uni.research.totalEarned = (uni.research.totalEarned || 0) + earned;
+      uni.research.discoveryCount = (uni.research.discoveryCount || 0) + accepted.length;
+      for (const d of accepted) {
+        if (!uni.research.classesDiscovered.includes(d.objectClass)) {
+          uni.research.classesDiscovered.push(d.objectClass);
+        }
+      }
+
+      for (const d of accepted.filter((a) => a.rarity === "rare" || a.rarity === "exceptional")) {
+        recordEvent(uni, {
+          type: "discovery",
+          description: `Cataloged ${d.name} (${d.objectClass})`,
+          effects: { discoveryId: d.id, rarity: d.rarity, researchValue: d.researchValue }
+        });
+      }
+
+      uni.markModified("discoveries");
+      uni.markModified("research");
+      uni.lastModified = new Date();
+      await uni.save();
+
+      console.log(`🔭 ${accepted.length} discoveries (+${earned} RP) in ${uni.name}`);
+    }
+
+    return res.json({
+      ok: true,
+      accepted: accepted.map((d) => d.id),
+      duplicates,
+      rejected,
+      research: uni.research
+    });
+  } catch (err) {
+    console.error("Discoveries error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to record discoveries" });
   }
 });
 
