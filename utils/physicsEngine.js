@@ -359,16 +359,19 @@ class PhysicsEngine {
   }
 
   _spawnCivilizations(count, ageGyr) {
-    // New civilizations emerge 2-8 chunks from the player's last known
+    // New civilizations emerge a few chunks from the player's last known
     // position (same convention as anomalies) so First Contact beacons are
     // reachable by exploration rather than scattered across infinity.
+    // civSpawnRange (chunks) is overridable - dev spawns use a tight range
+    // so test civs are immediately findable.
     const CHUNK_SIZE = 1000;
     const origin = this.options.playerPosition || { x: 0, y: 0 };
+    const range = this.options.civSpawnRange || { min: 2, max: 8 };
 
     for (let i = 0; i < count; i++) {
       const civType = this._determineCivilizationType(ageGyr);
       const angle = this._rand() * Math.PI * 2;
-      const distance = (2 + this._rand() * 6) * CHUNK_SIZE;
+      const distance = (range.min + this._rand() * (range.max - range.min)) * CHUNK_SIZE;
 
       this.universe.civilizations.push({
         id: `civ_${Date.now()}_${this._rand().toString(36).substr(2, 9)}`,

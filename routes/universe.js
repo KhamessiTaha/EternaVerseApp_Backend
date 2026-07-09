@@ -700,7 +700,9 @@ router.post("/:id/dev/spawn-civilizations", requireAdmin, async (req, res) => {
     const count = Math.max(1, Math.min(10, Math.floor(Number(req.body.count) || 1)));
     const engine = new PhysicsEngine(uni, {
       seed: `${uni.seed}:dev:${Date.now()}`,
-      playerPosition: uni.lastPlayerPosition
+      playerPosition: uni.lastPlayerPosition,
+      // Test civs land practically next door so they're findable immediately
+      civSpawnRange: { min: 1, max: 2 }
     });
     // Reuses the sim's own spawner so dev civs have the exact same shape as
     // natural ones; the caller owns the counters, mirroring _manageCivilizations
