@@ -8,6 +8,7 @@ const MLPredictor = require("../utils/mlPredictor");
 const Universe = require("../models/Universe");
 const { recordEvent } = require("../utils/eventLog");
 const { prepareDiscoveries } = require("../utils/discoveryValidator");
+const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgradeCatalog");
 
 router.use(verifyToken);
 
@@ -427,8 +428,11 @@ router.post("/:id/resolve-anomaly", async (req, res) => {
     const AnomalyGen = new AnomalyGenerator(uni, { seed: uni.seed });
 
     // Resolve anomaly - accuracy (0-100, from the minigame's performance grade)
-    // scales the reward; resolveAnomaly() clamps/validates it internally
-    const result = AnomalyGen.resolveAnomaly(anomalyId, accuracy);
+    // scales the reward; resolveAnomaly() clamps/validates it internally.
+    // The Containment Rig upgrade adds a server-side reward bonus computed
+    // from the universe's persisted upgrade level, never from client input.
+    const containmentMultiplier = 1 + (uni.upgrades?.containment || 0) * CONTAINMENT_BONUS_PER_LEVEL;
+    const result = AnomalyGen.resolveAnomaly(anomalyId, accuracy, containmentMultiplier);
 
     if (!result.success) {
       return res.status(400).json({
@@ -551,6 +555,50 @@ router.post("/:id/discoveries", async (req, res) => {
   } catch (err) {
     console.error("Discoveries error:", err);
     return res.status(500).json({ ok: false, error: "Failed to record discoveries" });
+  }
+});
+
+// Purchase a ship upgrade with research points. Costs and level caps live in
+// utils/upgradeCatalog.js (server-authoritative); the client only names the
+// track it wants.
+router.post("/:id/upgrade", async (req, res) => {
+  try {
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    if (uni.status === "ended") {
+      return res.status(400).json({ ok: false, error: "Cannot outfit a ship in an ended universe" });
+    }
+
+    const check = validatePurchase(uni, req.body.track);
+    if (!check.ok) {
+      return res.status(400).json({ ok: false, error: check.reason });
+    }
+
+    uni.research.points -= check.cost;
+    uni.upgrades[req.body.track] = check.nextLevel;
+
+    recordEvent(uni, {
+      type: "upgrade",
+      description: `Installed ${check.label} Mk ${check.nextLevel}`,
+      effects: { track: req.body.track, level: check.nextLevel, cost: check.cost }
+    });
+
+    uni.markModified("upgrades");
+    uni.markModified("research");
+    uni.lastModified = new Date();
+    await uni.save();
+
+    console.log(`🔧 ${check.label} Mk ${check.nextLevel} installed (-${check.cost} RP) in ${uni.name}`);
+
+    return res.json({
+      ok: true,
+      upgrades: uni.upgrades,
+      research: uni.research
+    });
+  } catch (err) {
+    console.error("Upgrade error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to purchase upgrade" });
   }
 });
 

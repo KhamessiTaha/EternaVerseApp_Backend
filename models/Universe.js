@@ -42,6 +42,15 @@ const ResearchSchema = new Schema({
   classesDiscovered: { type: [String], default: [] }
 }, { _id: false });
 
+// Ship upgrade levels (0 = stock). Track names and max levels must match
+// utils/upgradeCatalog.js, which owns cost/validation.
+const UpgradesSchema = new Schema({
+  thrusters: { type: Number, default: 0, min: 0, max: 3 },
+  boostReactor: { type: Number, default: 0, min: 0, max: 3 },
+  scanner: { type: Number, default: 0, min: 0, max: 3 },
+  containment: { type: Number, default: 0, min: 0, max: 3 }
+}, { _id: false });
+
 const CivilisationSchema = new Schema({
   id: { type: String, required: true },
   type: { type: String, enum: ["Type0", "Type1", "Type2", "Type3"], default: "Type0" },
@@ -158,6 +167,7 @@ const UniverseSchema = new Schema({
   anomalies: { type: [AnomalySchema], default: [] },
   discoveries: { type: [DiscoverySchema], default: [] },
   research: { type: ResearchSchema, default: () => ({}) },
+  upgrades: { type: UpgradesSchema, default: () => ({}) },
   civilizations: { type: [CivilisationSchema], default: [] },
   significantEvents: { type: [SignificantEventSchema], default: [] },
   milestones: { type: MilestonesSchema, default: () => ({}) },

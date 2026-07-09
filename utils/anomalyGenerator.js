@@ -317,7 +317,9 @@ class AnomalyGenerator {
     }
   }
 
-  resolveAnomaly(anomalyId, accuracy) {
+  // rewardMultiplier: ship-upgrade bonus (Containment Rig), computed by the
+  // route from the universe's persisted upgrade levels - never client input.
+  resolveAnomaly(anomalyId, accuracy, rewardMultiplier = 1) {
     const anomaly = this.universe.anomalies.find(
       a => a.id === anomalyId || a._id?.toString() === anomalyId
     );
@@ -330,19 +332,20 @@ class AnomalyGenerator {
     anomaly.resolvedAt = new Date();
 
     const performanceMultiplier = getPerformanceMultiplier(accuracy);
+    const totalMultiplier = performanceMultiplier * rewardMultiplier;
 
     const cs = this.universe.currentState;
 
     const baseBoost = 0.015;
     const severityMultiplier = anomaly.severity;
-    const stabilityBoost = baseBoost * severityMultiplier * performanceMultiplier;
+    const stabilityBoost = baseBoost * severityMultiplier * totalMultiplier;
 
     cs.stabilityIndex = this._clamp(cs.stabilityIndex + stabilityBoost, 0, 1);
 
-    const entropyReduction = 3e6 * severityMultiplier * performanceMultiplier;
+    const entropyReduction = 3e6 * severityMultiplier * totalMultiplier;
     cs.entropy = Math.max(0, cs.entropy - entropyReduction);
 
-    cs.energyBudget = this._clamp(cs.energyBudget + 0.002 * severityMultiplier * performanceMultiplier, 0, 1);
+    cs.energyBudget = this._clamp(cs.energyBudget + 0.002 * severityMultiplier * totalMultiplier, 0, 1);
 
     this.universe.metrics.playerInterventions =
       (this.universe.metrics.playerInterventions || 0) + 1;
@@ -359,8 +362,9 @@ class AnomalyGenerator {
       stabilityBoost,
       entropyReduction,
       performanceMultiplier,
+      rewardMultiplier,
       accuracy: typeof accuracy === "number" ? Math.max(0, Math.min(100, accuracy)) : null,
-      anomaly 
+      anomaly
     };
   }
 
