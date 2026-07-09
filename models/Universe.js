@@ -42,6 +42,22 @@ const ResearchSchema = new Schema({
   classesDiscovered: { type: [String], default: [] }
 }, { _id: false });
 
+// Generated objectives. Progress is measured as a delta over `baseline`
+// (the metric's value when the mission was issued) - see utils/missionSystem.js.
+const MissionSchema = new Schema({
+  id: { type: String, required: true },
+  templateId: { type: String },
+  title: { type: String },
+  description: { type: String },
+  metric: { type: String },
+  baseline: { type: Number, default: 0 },
+  target: { type: Number, default: 1 },
+  reward: { type: Number, default: 0 },
+  status: { type: String, enum: ["active", "claimed"], default: "active" },
+  issuedAt: { type: Date, default: Date.now },
+  completedAt: { type: Date, default: null }
+}, { _id: false });
+
 // Ship upgrade levels (0 = stock). Track names and max levels must match
 // utils/upgradeCatalog.js, which owns cost/validation.
 const UpgradesSchema = new Schema({
@@ -177,6 +193,7 @@ const UniverseSchema = new Schema({
   discoveries: { type: [DiscoverySchema], default: [] },
   research: { type: ResearchSchema, default: () => ({}) },
   upgrades: { type: UpgradesSchema, default: () => ({}) },
+  missions: { type: [MissionSchema], default: [] },
   civilizations: { type: [CivilisationSchema], default: [] },
   significantEvents: { type: [SignificantEventSchema], default: [] },
   milestones: { type: MilestonesSchema, default: () => ({}) },

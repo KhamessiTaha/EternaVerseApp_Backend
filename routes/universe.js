@@ -12,6 +12,7 @@ const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgr
 const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils/simulationRunner");
 const { applyContact, civDesignation } = require("../utils/contactSystem");
 const requireAdmin = require("../middleware/adminMiddleware");
+const { ensureMissions, claimMission } = require("../utils/missionSystem");
 
 router.use(verifyToken);
 
@@ -109,8 +110,11 @@ router.post("/", async (req, res) => {
 
     uni.lastModified = new Date();
 
+    // Every universe starts with a full objective board
+    ensureMissions(uni);
+
     await uni.save();
-    
+
     console.log(`✅ Created universe: ${uni.name} [${selectedDifficulty}]`);
     
     return res.status(201).json({ ok: true, universe: uni });
@@ -179,6 +183,12 @@ router.post("/:id/simulate", async (req, res) => {
         endReason: uni.endReason,
         universe: uni
       });
+    }
+
+    // Top up the objective board (covers universes created before missions
+    // existed, and templates that only became eligible as the sim evolved)
+    if (ensureMissions(uni) > 0) {
+      uni.markModified("missions");
     }
 
     // ML predictions (after simulation)
@@ -402,6 +412,49 @@ router.post("/:id/discoveries", async (req, res) => {
   } catch (err) {
     console.error("Discoveries error:", err);
     return res.status(500).json({ ok: false, error: "Failed to record discoveries" });
+  }
+});
+
+// Claim a completed mission. Completion is validated server-side against
+// live universe state; the reward flows through the research economy and a
+// replacement objective is issued automatically.
+router.post("/:id/claim-mission", async (req, res) => {
+  try {
+    const { missionId } = req.body;
+    if (!missionId) {
+      return res.status(400).json({ ok: false, error: "missionId required" });
+    }
+
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    if (uni.status === "ended") {
+      return res.status(400).json({ ok: false, error: "Cannot claim missions in an ended universe" });
+    }
+
+    const result = claimMission(uni, missionId);
+    if (!result.ok) {
+      return res.status(400).json({ ok: false, error: result.reason });
+    }
+
+    recordEvent(uni, {
+      type: "mission",
+      description: `Objective complete: ${result.mission.title} (+${result.reward} RP)`,
+      effects: { missionId, templateId: result.mission.templateId, reward: result.reward }
+    });
+
+    uni.markModified("missions");
+    uni.markModified("research");
+    uni.markModified("significantEvents");
+    uni.lastModified = new Date();
+    await uni.save();
+
+    console.log(`🎯 Mission claimed in ${uni.name}: ${result.mission.title} (+${result.reward} RP)`);
+
+    return res.json({ ok: true, reward: result.reward, title: result.mission.title, universe: uni });
+  } catch (err) {
+    console.error("Claim mission error:", err);
+    return res.status(500).json({ ok: false, error: "Claim failed" });
   }
 });
 
