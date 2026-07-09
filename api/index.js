@@ -58,9 +58,12 @@ app.get("/api", (req, res) => {
 const authRoutes = require("../routes/auth");
 const userRoutes = require("../routes/user");
 const universeRoutes = require("../routes/universe");
+const cronRoutes = require("../routes/cron");
 
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/universe", universeRoutes);
+// Scheduler-facing (CRON_SECRET auth, not JWT) - see routes/cron.js
+app.use("/api/cron", cronRoutes);
 
 module.exports = app;

@@ -1,0 +1,33 @@
+# Advances every running universe while nobody is online, by calling the
+# backend's cron sweep endpoint on a schedule. This exists because Vercel's
+# Hobby plan limits its own cron to once per day - GitHub Actions schedules
+# are free and can run every 15 minutes.
+#
+# Setup (one time, in this repo's GitHub Settings -> Secrets and variables
+# -> Actions):
+#   SWEEP_URL   = https://<your-backend>.vercel.app/api/cron/sweep
+#   CRON_SECRET = the same random string set as CRON_SECRET in Vercel's
+#                 environment variables (generate one, e.g. `openssl rand -hex 32`)
+#
+# The 15-minute cadence comfortably outpaces the simulation's catch-up cap
+# (100 steps = ~50 minutes of universe time per sweep), so universes never
+# fall behind even when GitHub delays a scheduled run.
+name: Universe Simulation Sweep
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger simulation sweep
+        env:
+          SWEEP_URL: ${{ secrets.SWEEP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl -sS -X POST "$SWEEP_URL" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            --fail-with-body

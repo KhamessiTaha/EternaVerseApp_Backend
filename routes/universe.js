@@ -9,6 +9,7 @@ const Universe = require("../models/Universe");
 const { recordEvent } = require("../utils/eventLog");
 const { prepareDiscoveries } = require("../utils/discoveryValidator");
 const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgradeCatalog");
+const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils/simulationRunner");
 
 router.use(verifyToken);
 
@@ -33,48 +34,6 @@ async function findOwnedUniverse(req, res, { lean = false, select = null } = {})
   }
 
   return uni;
-}
-
-/**
- * Simulation randomness must not replay the same sequence every request
- * (seeding from uni.seed alone did exactly that - every /simulate call
- * rolled identical numbers). Mixing in the universe's current age keeps it
- * deterministic for a given state while advancing the sequence as the
- * universe evolves.
- */
-function simulationSeed(uni) {
-  return `${uni.seed}:${uni.currentState?.age ?? 0}`;
-}
-
-// Difficulty configuration
-function difficultyOptions(difficulty) {
-  const map = {
-    Beginner: {
-      timeStepYears: 5e7,
-      anomalyProbabilityScale: 0.002,
-      maxAnomalyPerStep: 1,
-      observableGalaxiesMultiplier: 0.7,
-      difficultyModifier: 0.5,
-      description: "Relaxed pace, fewer anomalies, forgiving physics"
-    },
-    Intermediate: {
-      timeStepYears: 2e7,
-      anomalyProbabilityScale: 0.008,
-      maxAnomalyPerStep: 3,
-      observableGalaxiesMultiplier: 1.0,
-      difficultyModifier: 1.0,
-      description: "Balanced progression, moderate anomalies"
-    },
-    Advanced: {
-      timeStepYears: 1e7,
-      anomalyProbabilityScale: 0.02,
-      maxAnomalyPerStep: 5,
-      observableGalaxiesMultiplier: 1.3,
-      difficultyModifier: 2.0,
-      description: "Fast-paced, frequent anomalies, challenging physics"
-    }
-  };
-  return map[difficulty] || map.Intermediate;
 }
 
 // Get all universes
@@ -171,14 +130,9 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// How much real-world time one simulation step represents. The universe
-// advances based on elapsed wall-clock time since it was last simulated,
-// not based on whether any client happens to be polling - so it keeps
-// aging (and catches up) even if nobody has the game open.
-const SECONDS_PER_STEP = 30;
-const MAX_STEPS = 100;
-
-// simulate N steps with modular architecture
+// Advance the universe by however much wall-clock time has elapsed. The
+// pipeline itself lives in utils/simulationRunner.js, shared with the cron
+// sweep so offline and online simulation are bit-identical.
 router.post("/:id/simulate", async (req, res) => {
   try {
     const uni = await findOwnedUniverse(req, res);
@@ -193,12 +147,22 @@ router.post("/:id/simulate", async (req, res) => {
       });
     }
 
-    const now = new Date();
-    const lastSimulatedAt = uni.lastSimulatedAt || uni.lastModified || uni.createdAt || now;
-    const elapsedSeconds = Math.max(0, (now - lastSimulatedAt) / 1000);
-    const steps = Math.min(MAX_STEPS, Math.floor(elapsedSeconds / SECONDS_PER_STEP));
+    // Player position drives where anomalies spawn - persist whatever the
+    // client last reported, and fall back to that if this call doesn't send
+    // one (e.g. the cron sweep, or a tick without a fresh position).
+    const incomingPosition = req.body.playerPosition;
+    if (
+      incomingPosition &&
+      typeof incomingPosition.x === "number" &&
+      typeof incomingPosition.y === "number"
+    ) {
+      uni.lastPlayerPosition = { x: incomingPosition.x, y: incomingPosition.y };
+    }
 
-    if (steps <= 0) {
+    const now = new Date();
+    const result = advanceUniverse(uni, now);
+
+    if (result.steps === 0) {
       // Not enough real time has passed for a full step yet - avoid
       // re-running physics/anomalies/predictions for nothing.
       const Physics = new PhysicsEngine(uni, { seed: simulationSeed(uni) });
@@ -215,126 +179,8 @@ router.post("/:id/simulate", async (req, res) => {
       });
     }
 
-    // Get difficulty-specific options
-    const diffOpts = difficultyOptions(uni.difficulty || "Intermediate");
-
-    // Apply observableGalaxies multiplier
-    if (!uni.constants) uni.constants = {};
-    const baseGalaxies = 2e11;
-    uni.constants.observableGalaxies = baseGalaxies * diffOpts.observableGalaxiesMultiplier;
-
-    // Player position drives where anomalies spawn - persist whatever the
-    // client last reported, and fall back to that if this call doesn't send one
-    // (e.g. background simulation ticks fired without a fresh position).
-    const incomingPosition = req.body.playerPosition;
-    if (
-      incomingPosition &&
-      typeof incomingPosition.x === "number" &&
-      typeof incomingPosition.y === "number"
-    ) {
-      uni.lastPlayerPosition = { x: incomingPosition.x, y: incomingPosition.y };
-    }
-    const playerPosition = uni.lastPlayerPosition || { x: 0, y: 0 };
-
-    // Build options with difficulty modifier
-    const stepSeed = simulationSeed(uni);
-    const engineOptions = {
-      timeStepYears: diffOpts.timeStepYears,
-      difficultyModifier: diffOpts.difficultyModifier,
-      seed: stepSeed
-    };
-
-    const anomalyOptions = {
-      anomalyProbabilityScale: diffOpts.anomalyProbabilityScale,
-      maxAnomalyPerStep: diffOpts.maxAnomalyPerStep,
-      difficultyModifier: diffOpts.difficultyModifier,
-      seed: stepSeed,
-      playerPosition,
-      anomalyIdFactory: () => `${uni._id.toString()}_${Date.now()}_${Math.floor(Math.random()*1e6)}`
-    };
-
-    // ========== MODULAR SIMULATION PIPELINE ==========
-    
-    // 1 ------ Create Physics Engine
-    const Physics = new PhysicsEngine(uni, engineOptions);
-
-    // 2 ------ Create Anomaly Generator
-    const AnomalyGen = new AnomalyGenerator(uni, anomalyOptions);
-
-    // 3 ------ Create End Conditions Checker
-    const EndChecker = new EndConditions(uni, {
-      difficultyModifier: diffOpts.difficultyModifier
-    });
-
-    // 4 ------- Create ML Predictor
-    const Predictor = new MLPredictor(uni);
-
-    // all created anomalies
-    const allCreatedAnomalies = [];
-
-    // Simulate steps §§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§§!
-    for (let i = 0; i < steps; i++) {
-      // physics simulation
-      Physics.simulateStep();
-      // generate anomalies
-      const newAnomalies = AnomalyGen.generateAnomalies();
-      
-      if (newAnomalies.length > 0) {
-        // Apply anomaly effects to universe state
-        for (const anomaly of newAnomalies) {
-          AnomalyGen.applyAnomalyEffects(anomaly.effectsRaw);
-
-          recordEvent(uni, {
-            type: anomaly.type,
-            description: anomaly.description,
-            effects: anomaly.effectsRaw
-          });
-        }
-        
-        // Add to universe anomalies array
-        uni.anomalies.push(...newAnomalies);
-        allCreatedAnomalies.push(...newAnomalies);
-      }
-
-      // C. Decay unresolved anomalies
-      AnomalyGen.decayUnresolvedAnomalies();
-
-      // D. Update stability after anomaly effects
-      Physics._updateStability();
-
-      // E. Check end conditions
-      EndChecker.options.stabilityHistory = Physics.getStabilityHistory();
-      const hasEnded = EndChecker.checkEndConditions();
-      
-      if (hasEnded) {
-        recordEvent(uni, {
-          type: "universe_end",
-          description: uni.endReason
-        });
-        break;
-      }
-    }
-
-    // F. Run ML predictions (after simulation)
-    const predictions = Predictor.generatePredictions();
-
-    // Mark arrays as modified for Mongoose
-    if (allCreatedAnomalies.length > 0) {
-      uni.markModified('anomalies');
-      console.log(`🌌 Created ${allCreatedAnomalies.length} new anomalies`);
-    }
-    if (uni.significantEvents.length > 0) {
-      uni.markModified('significantEvents');
-    }
-    if (uni.civilizations.length > 0) {
-      uni.markModified('civilizations');
-    }
-    uni.markModified('currentState');
-    uni.markModified('metrics');
-
-    // Update timestamps
-    uni.lastModified = now;
-    uni.lastSimulatedAt = now;
+    // ML predictions (after simulation)
+    const predictions = new MLPredictor(uni).generatePredictions();
 
     // Save with error handling
     try {
@@ -348,14 +194,13 @@ router.post("/:id/simulate", async (req, res) => {
       });
     }
 
-    const stats = Physics.getStatistics();
-    const anomalyStats = AnomalyGen.getAnomalyStats();
-    const endStatus = EndChecker.getEndConditionStatus();
-    const warnings = EndChecker.getWarnings();
-    
-    // Log simulation results
+    const stats = result.Physics.getStatistics();
+    const anomalyStats = result.AnomalyGen.getAnomalyStats();
+    const endStatus = result.EndChecker.getEndConditionStatus();
+    const warnings = result.EndChecker.getWarnings();
+
     console.log(
-      `🎮 Simulated ${steps} steps | ` +
+      `🎮 Simulated ${result.steps} steps | ` +
       `Age: ${stats.ageGyr} Gyr | ` +
       `Stability: ${stats.stability} | ` +
       `Anomalies: ${anomalyStats.active}/${anomalyStats.total}`
@@ -364,26 +209,26 @@ router.post("/:id/simulate", async (req, res) => {
     if (uni.status === "ended") {
       console.log(`🌑 Universe ended: ${uni.endCondition} - ${uni.endReason}`);
     }
-    
-    return res.json({ 
-      ok: true, 
-      steps, 
+
+    return res.json({
+      ok: true,
+      steps: result.steps,
       stats,
       anomalyStats,
       endStatus,
       warnings,
       predictions,
-      createdAnomalies: allCreatedAnomalies,
+      createdAnomalies: result.createdAnomalies,
       hasEnded: uni.status === "ended",
       endCondition: uni.endCondition,
       endReason: uni.endReason,
-      universe: uni 
+      universe: uni
     });
   } catch (err) {
     console.error("Simulate error:", err);
-    return res.status(500).json({ 
-      ok: false, 
-      error: err.message || "Simulation error" 
+    return res.status(500).json({
+      ok: false,
+      error: err.message || "Simulation error"
     });
   }
 });
