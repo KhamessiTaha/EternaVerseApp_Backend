@@ -16,7 +16,10 @@ name: Universe Simulation Sweep
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    # Offset minutes on purpose: GitHub's scheduler is best-effort and drops
+    # runs under load, which peaks at :00/:15/:30/:45 - the exact minutes
+    # "*/15" asks for. Quiet odd minutes get dropped far less often.
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch: {}
 
 jobs:
