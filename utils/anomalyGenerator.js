@@ -214,40 +214,8 @@ class AnomalyGenerator {
 
       if (roll < prob) {
         const severity = 1 + Math.floor(this._rand() * 3);
-        const effects = def.effects(severity);
-        
-        // Spawn near player (within 1-4 chunks)
-        const playerPos = this.options.playerPosition || { x: 0, y: 0 };
-        const playerChunk = this._getChunkCoords(playerPos.x, playerPos.y);
-        
-        const minDistance = 1;
-        const maxDistance = 4;
-        
-        const angle = this._rand() * Math.PI * 2;
-        const distance = minDistance + this._rand() * (maxDistance - minDistance);
-        
-        const targetChunkX = playerChunk.chunkX + Math.floor(Math.cos(angle) * distance);
-        const targetChunkY = playerChunk.chunkY + Math.floor(Math.sin(angle) * distance);
-        
-        const x = targetChunkX * CHUNK_SIZE + this._rand() * CHUNK_SIZE;
-        const y = targetChunkY * CHUNK_SIZE + this._rand() * CHUNK_SIZE;
-        
-        const anomaly = {
-          id: this.options.anomalyIdFactory(),
-          type: def.id,
-          category: def.category,
-          severity,
-          timestamp: new Date(),
-          resolved: false,
-          effectsRaw: effects,
-          location: { x, y, z: (this._rand() - 0.5) * 1e4 },
-          radius: 1000 * severity,
-          description: def.description,
-          decayRate: 0.001 * this._rand(),
-        };
-        
-        created.push(anomaly);
-        
+        created.push(this._buildAnomaly(def, severity));
+
         if (created.length >= cap) break;
       }
     }
@@ -258,6 +226,54 @@ class AnomalyGenerator {
       console.log(`✨ Generated ${created.length} anomalies near player chunk (${playerChunk.chunkX}, ${playerChunk.chunkY}): ${summary}`);
     }
 
+    return created;
+  }
+
+  /** Build one anomaly of the given type near the player (1-4 chunks out). */
+  _buildAnomaly(def, severity) {
+    const playerPos = this.options.playerPosition || { x: 0, y: 0 };
+    const playerChunk = this._getChunkCoords(playerPos.x, playerPos.y);
+
+    const angle = this._rand() * Math.PI * 2;
+    const distance = 1 + this._rand() * 3; // 1-4 chunks
+
+    const targetChunkX = playerChunk.chunkX + Math.floor(Math.cos(angle) * distance);
+    const targetChunkY = playerChunk.chunkY + Math.floor(Math.sin(angle) * distance);
+
+    return {
+      id: this.options.anomalyIdFactory(),
+      type: def.id,
+      category: def.category,
+      severity,
+      timestamp: new Date(),
+      resolved: false,
+      effectsRaw: def.effects(severity),
+      location: {
+        x: targetChunkX * CHUNK_SIZE + this._rand() * CHUNK_SIZE,
+        y: targetChunkY * CHUNK_SIZE + this._rand() * CHUNK_SIZE,
+        z: (this._rand() - 0.5) * 1e4
+      },
+      radius: 1000 * severity,
+      description: def.description,
+      decayRate: 0.001 * this._rand(),
+    };
+  }
+
+  /**
+   * Dev tooling: unconditionally create `count` anomalies near the player,
+   * skipping the probability rolls and population conditions that gate
+   * natural spawns. Pushes onto the universe and returns them; effects are
+   * NOT applied to universe state (test spawns shouldn't damage stability).
+   */
+  forceSpawn(count = 1) {
+    const defs = this.getAnomalyTypes();
+    const created = [];
+    for (let i = 0; i < count; i++) {
+      const def = defs[Math.floor(this._rand() * defs.length)];
+      const severity = 1 + Math.floor(this._rand() * 3);
+      created.push(this._buildAnomaly(def, severity));
+    }
+    this.universe.anomalies.push(...created);
     return created;
   }
 

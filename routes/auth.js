@@ -33,9 +33,11 @@ router.post("/login", async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(400).json({ message: "Invalid password" });
 
-    // Generate JWT Token
+    // Generate JWT Token. isAdmin in the response is a UI hint only (shows
+    // the dev panel) - actual authorization is re-checked against the DB on
+    // every dev request by adminMiddleware.
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "24h" });
-    res.json({ token, userId: user._id, username: user.username });
+    res.json({ token, userId: user._id, username: user.username, isAdmin: !!user.isAdmin });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

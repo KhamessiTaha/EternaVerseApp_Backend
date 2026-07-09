@@ -11,6 +11,7 @@ const { prepareDiscoveries } = require("../utils/discoveryValidator");
 const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgradeCatalog");
 const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils/simulationRunner");
 const { applyContact, civDesignation } = require("../utils/contactSystem");
+const requireAdmin = require("../middleware/adminMiddleware");
 
 router.use(verifyToken);
 
@@ -611,6 +612,111 @@ router.post("/:id/cleanup-anomalies", async (req, res) => {
   } catch (err) {
     console.error("Cleanup anomalies error:", err);
     return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+// ============================================================
+// DEV / TEST ENDPOINTS (admin only)
+//
+// Every route below runs requireAdmin, which re-checks isAdmin against the
+// DB per request - the flag itself is only settable by editing the user
+// document in MongoDB directly, so regular players cannot reach these even
+// by calling the API by hand. All input amounts are clamped server-side.
+// ============================================================
+
+// Fast-forward the simulation by N steps regardless of wall-clock time
+router.post("/:id/dev/fast-forward", requireAdmin, async (req, res) => {
+  try {
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+    if (uni.status === "ended") {
+      return res.status(400).json({ ok: false, error: "Universe already ended" });
+    }
+
+    const steps = Math.max(1, Math.min(500, Math.floor(Number(req.body.steps) || 1)));
+    const result = advanceUniverse(uni, new Date(), { forceSteps: steps });
+    await uni.save();
+
+    console.log(`🛠️ [DEV] Fast-forwarded ${uni.name} by ${result.steps} steps`);
+    return res.json({ ok: true, steps: result.steps, stats: result.Physics.getStatistics(), universe: uni });
+  } catch (err) {
+    console.error("Dev fast-forward error:", err);
+    return res.status(500).json({ ok: false, error: "Fast-forward failed" });
+  }
+});
+
+// Grant research points
+router.post("/:id/dev/grant-research", requireAdmin, async (req, res) => {
+  try {
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    const points = Math.max(1, Math.min(100000, Math.floor(Number(req.body.points) || 0)));
+    if (!uni.research) uni.research = {};
+    uni.research.points = (uni.research.points || 0) + points;
+    uni.markModified("research");
+    await uni.save();
+
+    console.log(`🛠️ [DEV] Granted ${points} RP in ${uni.name}`);
+    return res.json({ ok: true, granted: points, universe: uni });
+  } catch (err) {
+    console.error("Dev grant-research error:", err);
+    return res.status(500).json({ ok: false, error: "Grant failed" });
+  }
+});
+
+// Force-spawn anomalies near the player (no probability gates, no effects
+// applied to universe state - just interactable test targets)
+router.post("/:id/dev/spawn-anomalies", requireAdmin, async (req, res) => {
+  try {
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    const count = Math.max(1, Math.min(10, Math.floor(Number(req.body.count) || 1)));
+    const AnomalyGen = new AnomalyGenerator(uni, {
+      seed: `${uni.seed}:dev:${Date.now()}`,
+      playerPosition: uni.lastPlayerPosition,
+      anomalyIdFactory: () => `${uni._id.toString()}_${Date.now()}_${Math.floor(Math.random() * 1e6)}`
+    });
+    const created = AnomalyGen.forceSpawn(count);
+
+    uni.markModified("anomalies");
+    await uni.save();
+
+    console.log(`🛠️ [DEV] Spawned ${created.length} anomalies in ${uni.name}`);
+    return res.json({ ok: true, created, universe: uni });
+  } catch (err) {
+    console.error("Dev spawn-anomalies error:", err);
+    return res.status(500).json({ ok: false, error: "Spawn failed" });
+  }
+});
+
+// Force-spawn civilizations near the player
+router.post("/:id/dev/spawn-civilizations", requireAdmin, async (req, res) => {
+  try {
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    const count = Math.max(1, Math.min(10, Math.floor(Number(req.body.count) || 1)));
+    const engine = new PhysicsEngine(uni, {
+      seed: `${uni.seed}:dev:${Date.now()}`,
+      playerPosition: uni.lastPlayerPosition
+    });
+    // Reuses the sim's own spawner so dev civs have the exact same shape as
+    // natural ones; the caller owns the counters, mirroring _manageCivilizations
+    engine._spawnCivilizations(count, (uni.currentState?.age || 0) / 1e9);
+    uni.currentState.civilizationCount = (uni.currentState.civilizationCount || 0) + count;
+    uni.currentState.civilizationsCreated = (uni.currentState.civilizationsCreated || 0) + count;
+
+    uni.markModified("civilizations");
+    uni.markModified("currentState");
+    await uni.save();
+
+    console.log(`🛠️ [DEV] Spawned ${count} civilizations in ${uni.name}`);
+    return res.json({ ok: true, spawned: count, universe: uni });
+  } catch (err) {
+    console.error("Dev spawn-civilizations error:", err);
+    return res.status(500).json({ ok: false, error: "Spawn failed" });
   }
 });
 

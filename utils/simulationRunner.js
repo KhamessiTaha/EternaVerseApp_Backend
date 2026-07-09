@@ -71,9 +71,14 @@ function pendingSteps(uni, now = new Date()) {
  * owed. Returns { steps: 0 } when no full step has elapsed yet; otherwise
  * { steps, createdAnomalies, Physics, AnomalyGen, EndChecker } so callers
  * can pull stats/warnings from the same engine instances that ran.
+ *
+ * options.forceSteps (admin dev tooling only): run exactly this many steps
+ * regardless of wall-clock time - used to fast-forward test universes.
  */
-function advanceUniverse(uni, now = new Date()) {
-  const steps = pendingSteps(uni, now);
+function advanceUniverse(uni, now = new Date(), options = {}) {
+  const steps = options.forceSteps
+    ? Math.max(1, Math.min(500, Math.floor(options.forceSteps)))
+    : pendingSteps(uni, now);
   if (steps <= 0) {
     return { steps: 0, createdAnomalies: [] };
   }
