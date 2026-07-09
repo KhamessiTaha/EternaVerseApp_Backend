@@ -90,7 +90,8 @@ function advanceUniverse(uni, now = new Date()) {
   const Physics = new PhysicsEngine(uni, {
     timeStepYears: diffOpts.timeStepYears,
     difficultyModifier: diffOpts.difficultyModifier,
-    seed: stepSeed
+    seed: stepSeed,
+    playerPosition // civilization spawn locations, same convention as anomalies
   });
 
   const AnomalyGen = new AnomalyGenerator(uni, {

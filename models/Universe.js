@@ -64,7 +64,16 @@ const CivilisationSchema = new Schema({
   warlikeness: { type: Number, default: 0, min: 0, max: 1 },
   extinct: { type: Boolean, default: false },
   extinctionDate: { type: Date, default: null },
-  extinctionAge: { type: Number, default: null }
+  extinctionAge: { type: Number, default: null },
+  // First Contact: world position (null for civs spawned before locations
+  // existed - those simply never appear as beacons) + per-civ contact state
+  location: {
+    x: { type: Number, default: null },
+    y: { type: Number, default: null }
+  },
+  observed: { type: Boolean, default: false },
+  uplifts: { type: Number, default: 0, min: 0 },
+  pacifies: { type: Number, default: 0, min: 0 }
 }, { _id: false });
 
 const SignificantEventSchema = new Schema({

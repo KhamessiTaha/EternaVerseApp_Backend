@@ -10,6 +10,7 @@ const { recordEvent } = require("../utils/eventLog");
 const { prepareDiscoveries } = require("../utils/discoveryValidator");
 const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgradeCatalog");
 const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils/simulationRunner");
+const { applyContact, civDesignation } = require("../utils/contactSystem");
 
 router.use(verifyToken);
 
@@ -400,6 +401,56 @@ router.post("/:id/discoveries", async (req, res) => {
   } catch (err) {
     console.error("Discoveries error:", err);
     return res.status(500).json({ ok: false, error: "Failed to record discoveries" });
+  }
+});
+
+// First Contact: interact with a civilization (observe / uplift / pacify).
+// All effects, costs, and the uplift backfire roll are server-side
+// (utils/contactSystem.js) - the client only names the civ and the action.
+router.post("/:id/contact-civilization", async (req, res) => {
+  try {
+    const { civId, action } = req.body;
+    if (!civId || !action) {
+      return res.status(400).json({ ok: false, error: "civId and action required" });
+    }
+
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    if (uni.status === "ended") {
+      return res.status(400).json({ ok: false, error: "Cannot contact civilizations in an ended universe" });
+    }
+
+    const result = applyContact(uni, civId, action);
+    if (!result.ok) {
+      return res.status(400).json({ ok: false, error: result.reason });
+    }
+
+    recordEvent(uni, {
+      type: "contact",
+      description: result.message,
+      effects: { civId, action, outcome: result.outcome, cost: result.cost ?? 0, reward: result.reward ?? 0 }
+    });
+
+    uni.markModified("civilizations");
+    uni.markModified("research");
+    uni.markModified("significantEvents");
+    uni.lastModified = new Date();
+    await uni.save();
+
+    console.log(`🛸 Contact [${action}/${result.outcome}] with ${civDesignation(civId)} in ${uni.name}`);
+
+    return res.json({
+      ok: true,
+      outcome: result.outcome,
+      message: result.message,
+      cost: result.cost ?? 0,
+      reward: result.reward ?? 0,
+      universe: uni
+    });
+  } catch (err) {
+    console.error("Contact error:", err);
+    return res.status(500).json({ ok: false, error: "Contact failed" });
   }
 });
 
