@@ -805,6 +805,23 @@ router.post("/:id/dev/spawn-civilizations", requireAdmin, async (req, res) => {
     // Reuses the sim's own spawner so dev civs have the exact same shape as
     // natural ones; the caller owns the counters, mirroring _manageCivilizations
     engine._spawnCivilizations(count, (uni.currentState?.age || 0) / 1e9);
+
+    // Optional disposition override so attitude features (worship tribute,
+    // hostile missile fire) are testable without grinding relationship
+    const disposition = req.body.disposition;
+    if (disposition === "worship" || disposition === "hostile") {
+      for (const civ of uni.civilizations.slice(-count)) {
+        if (disposition === "worship") {
+          civ.type = "Type1";
+          civ.relationship = 0.6;
+          civ.warlikeness = Math.min(civ.warlikeness ?? 0.5, 0.4);
+        } else {
+          civ.type = "Type1"; // Type0 civs never fire - see CivilizationSystem
+          civ.relationship = -0.6;
+          civ.warlikeness = 0.85;
+        }
+      }
+    }
     uni.currentState.civilizationCount = (uni.currentState.civilizationCount || 0) + count;
     uni.currentState.civilizationsCreated = (uni.currentState.civilizationsCreated || 0) + count;
 
