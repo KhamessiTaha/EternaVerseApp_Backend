@@ -200,6 +200,35 @@ router.post("/:id/simulate", async (req, res) => {
     try {
       await uni.save();
     } catch (saveErr) {
+      // Concurrent-writer conflict: the cron sweep (or another request)
+      // advanced this universe between our load and save, so Mongoose's
+      // version check rejects our stale write ("No matching document found
+      // for id..."). The universe DID advance - just not by this request -
+      // so hand back the fresh state instead of a 500. Our own steps are
+      // safely re-derivable: lastSimulatedAt now reflects the other
+      // writer's save, and the next tick catches up whatever remains.
+      const isVersionConflict =
+        saveErr.name === "VersionError" || /No matching document found/i.test(saveErr.message);
+      if (isVersionConflict) {
+        const fresh = await Universe.findById(uni._id).lean();
+        if (fresh && fresh.userId?.toString() === req.user.id) {
+          console.log(`↩️ Simulate save superseded by concurrent writer for ${fresh.name} - returning fresh state`);
+          const Physics = new PhysicsEngine(fresh, { seed: simulationSeed(fresh) });
+          return res.json({
+            ok: true,
+            steps: 0,
+            skipped: true,
+            concurrent: true,
+            stats: Physics.getStatistics(),
+            createdAnomalies: [],
+            hasEnded: fresh.status === "ended",
+            endCondition: fresh.endCondition,
+            endReason: fresh.endReason,
+            universe: fresh
+          });
+        }
+      }
+
       console.error("Save error:", saveErr);
       return res.status(500).json({
         ok: false,

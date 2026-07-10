@@ -44,9 +44,18 @@ router.post("/sweep", async (req, res) => {
           if (uni.status === "ended") ended++;
         }
       } catch (err) {
-        // One broken universe must not stall the rest of the sweep
-        console.error(`Sweep failed for universe ${uni._id}:`, err.message);
-        failures.push(uni._id.toString());
+        // Version conflicts just mean the owner's own client simulated this
+        // universe while the sweep was working - not a failure, the state
+        // is current either way. Anything else is a real problem.
+        const isVersionConflict =
+          err.name === "VersionError" || /No matching document found/i.test(err.message);
+        if (isVersionConflict) {
+          console.log(`↩️ Sweep superseded by live session for universe ${uni._id}`);
+        } else {
+          // One broken universe must not stall the rest of the sweep
+          console.error(`Sweep failed for universe ${uni._id}:`, err.message);
+          failures.push(uni._id.toString());
+        }
       }
     }
 
