@@ -89,7 +89,10 @@ const CivilisationSchema = new Schema({
   },
   observed: { type: Boolean, default: false },
   uplifts: { type: Number, default: 0, min: 0 },
-  pacifies: { type: Number, default: 0, min: 0 }
+  pacifies: { type: Number, default: 0, min: 0 },
+  // How this civ feels about the player (-1 hostile .. +1 devoted), shifted
+  // by contact actions and events; drives attitude (worship/hostile/...)
+  relationship: { type: Number, default: 0, min: -1, max: 1 }
 }, { _id: false });
 
 const SignificantEventSchema = new Schema({

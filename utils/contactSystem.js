@@ -22,6 +22,26 @@ const BACKFIRE_FACTOR = 0.35;
 
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
+/**
+ * How a civ regards the player, derived from relationship + temperament.
+ * Mirrored on the frontend (game/utils.js civAttitude) for display and
+ * beacon behavior - keep the two in sync.
+ *  - worship: only pre-stellar civs (Type0/1) deify the sky-vessel
+ *  - hostile: deeply wronged, or warlike and unimpressed - these SHOOT
+ */
+function civAttitude(civ) {
+  const r = civ.relationship || 0;
+  if ((civ.type === "Type0" || civ.type === "Type1") && r >= 0.45) return "worship";
+  if (r >= 0.25) return "friendly";
+  if (r <= -0.35 || ((civ.warlikeness ?? 0) > 0.75 && r < 0)) return "hostile";
+  if (r <= -0.15 || (civ.warlikeness ?? 0) > 0.6) return "wary";
+  return "neutral";
+}
+
+const shiftRelationship = (civ, delta) => {
+  civ.relationship = clamp((civ.relationship || 0) + delta, -1, 1);
+};
+
 /** Deterministic display designation, mirrored by the frontend. */
 function civDesignation(id) {
   let h = 2166136261;
@@ -53,6 +73,7 @@ function applyContact(universe, civId, action, rand = Math.random) {
 
     const reward = OBSERVE_REWARDS[civ.type] ?? OBSERVE_REWARDS.Type0;
     civ.observed = true;
+    shiftRelationship(civ, 0.05); // they noticed the watcher, and it flattered them
     if (!universe.research) universe.research = {};
     universe.research.points = (universe.research.points || 0) + reward;
     universe.research.totalEarned = (universe.research.totalEarned || 0) + reward;
@@ -81,6 +102,7 @@ function applyContact(universe, civId, action, rand = Math.random) {
       civ.technology = clamp((civ.technology || 0) + 4, 0, 100);
       civ.warlikeness = clamp((civ.warlikeness || 0) + 0.12, 0, 1);
       civ.stability = clamp((civ.stability ?? 0.5) - 0.06, 0, 1);
+      shiftRelationship(civ, -0.25); // the poisoned gift is not forgotten
       return {
         ok: true,
         action,
@@ -94,6 +116,7 @@ function applyContact(universe, civId, action, rand = Math.random) {
     civ.technology = clamp((civ.technology || 0) + 8 + rand() * 6, 0, 100);
     civ.developmentLevel = clamp((civ.developmentLevel || 0) + 0.06, 0, 1);
     civ.stability = clamp((civ.stability ?? 0.5) + 0.08, 0, 1);
+    shiftRelationship(civ, 0.18);
     return {
       ok: true,
       action,
@@ -115,6 +138,7 @@ function applyContact(universe, civId, action, rand = Math.random) {
     civ.pacifies = (civ.pacifies || 0) + 1;
     civ.warlikeness = clamp((civ.warlikeness || 0) - 0.18, 0, 1);
     civ.stability = clamp((civ.stability ?? 0.5) + 0.05, 0, 1);
+    shiftRelationship(civ, 0.12);
     return {
       ok: true,
       action,
@@ -131,6 +155,7 @@ function applyContact(universe, civId, action, rand = Math.random) {
 module.exports = {
   applyContact,
   civDesignation,
+  civAttitude,
   OBSERVE_REWARDS,
   UPLIFT_BASE_COST,
   PACIFY_BASE_COST,

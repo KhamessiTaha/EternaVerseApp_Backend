@@ -1,5 +1,6 @@
 const seedrandom = require("seedrandom");
 const { recordEvent } = require("./eventLog");
+const { civDesignation, civAttitude } = require("./contactSystem");
 
 /**
  * Enhanced PhysicsEngine with improved civilization lifecycle management
@@ -404,6 +405,90 @@ class PhysicsEngine {
     }
   }
 
+  /**
+   * Civilization drama. Rare, state-gated flavor events that shift real
+   * stats and land in the Chronicle - the "Solar 2 layer" where the sim
+   * reacts to how the player has treated each civ. Worshipping civs pay
+   * research tribute; wronged ones stew. Probabilities are per simulation
+   * step (~30s wall-clock), tuned so an active universe produces a few of
+   * these per real-world hour, not a spam feed.
+   */
+  _maybeCivilizationEvent(civ) {
+    const name = civDesignation(civ.id);
+    const attitude = civAttitude(civ);
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+    const emit = (description, effects = {}) =>
+      this._recordSignificantEvent("civilization", description, { civilizationId: civ.id, ...effects });
+
+    // Worship tribute: the faithful tithe to the sky-vessel
+    if (attitude === "worship" && this._rand() < 0.02) {
+      const tribute = 4 + Math.floor(this._rand() * 10);
+      if (!this.universe.research) this.universe.research = {};
+      this.universe.research.points = (this.universe.research.points || 0) + tribute;
+      this.universe.research.totalEarned = (this.universe.research.totalEarned || 0) + tribute;
+      emit(`The faithful of ${name} burn offerings to the sky-vessel (+${tribute} RP tribute)`, { tribute });
+      return;
+    }
+
+    // Monument to the player
+    if (attitude === "worship" && this._rand() < 0.004) {
+      civ.relationship = clamp((civ.relationship || 0) + 0.05, -1, 1);
+      emit(`${name} completes a colossal monument depicting your ship. The likeness is... approximate.`);
+      return;
+    }
+
+    // Religious schism over the true nature of the sky-vessel
+    if (attitude === "worship" && this._rand() < 0.003) {
+      civ.stability = clamp((civ.stability ?? 0.5) - 0.08, 0, 1);
+      emit(`${name} splits into rival churches arguing over the true nature of the sky-vessel. Councils are held. Councils fail.`);
+      return;
+    }
+
+    // Holy war waged in your name (worship + warlike = bad combination)
+    if (attitude === "worship" && (civ.warlikeness ?? 0) > 0.5 && this._rand() < 0.003) {
+      civ.population = Math.max(1e5, Math.floor((civ.population || 1e6) * 0.8));
+      civ.warlikeness = clamp((civ.warlikeness || 0) + 0.08, 0, 1);
+      emit(`${name} wages holy war in your name. You never asked for this.`);
+      return;
+    }
+
+    // Civil war: unstable + populous
+    if ((civ.stability ?? 0.5) < 0.45 && (civ.population || 0) > 1e6 && this._rand() < 0.004) {
+      civ.population = Math.floor((civ.population || 1e6) * (0.6 + this._rand() * 0.25));
+      civ.stability = clamp((civ.stability ?? 0.5) - 0.1, 0, 1);
+      civ.technology = clamp((civ.technology || 0) + 2, 0, 100); // war is a grim accelerant
+      emit(`Civil war erupts across ${name}. The reunification wars will advance their weapons by a generation.`);
+      return;
+    }
+
+    // Golden age: stable and flourishing
+    if ((civ.stability ?? 0.5) > 0.75 && this._rand() < 0.003) {
+      civ.technology = clamp((civ.technology || 0) + 4, 0, 100);
+      civ.population = Math.floor((civ.population || 1e6) * 1.15);
+      emit(`${name} enters a golden age of science and art.`);
+      return;
+    }
+
+    // Early rocketry (the Kerbal tribute)
+    if (civ.type === "Type0" && (civ.technology || 0) > 12 && (civ.technology || 0) < 24 && this._rand() < 0.004) {
+      civ.technology = clamp((civ.technology || 0) + 1, 0, 100);
+      emit(`${name}'s first orbital rocket explodes on the pad. Undeterred, they schedule another launch.`);
+      return;
+    }
+
+    // First satellite
+    if (civ.type === "Type0" && (civ.technology || 0) >= 24 && (civ.technology || 0) < 30 && this._rand() < 0.004) {
+      emit(`${name} places its first satellite in orbit. It does nothing but beep. They are beside themselves with pride.`);
+      return;
+    }
+
+    // Grudge simmers: hostile civs radicalize slowly
+    if (attitude === "hostile" && this._rand() < 0.002) {
+      civ.warlikeness = clamp((civ.warlikeness || 0) + 0.04, 0, 1);
+      emit(`${name} broadcasts a planetary address denouncing the sky-vessel. Military spending doubles.`);
+    }
+  }
+
   _evolveCivilizations(dt, ageGyr) {
     const cs = this.universe.currentState;
     
@@ -457,6 +542,10 @@ class PhysicsEngine {
       const warPressure = -(civ.warlikeness ?? 0) * 0.01;
 
       civ.stability = this._clamp((civ.stability ?? 0.5) + stabilityChange + resourcePressure + warPressure, 0, 1);
+
+      // Civilization drama: rare per-step events that make civs feel alive
+      // (civil wars, cults of the player, exploding rockets...)
+      this._maybeCivilizationEvent(civ);
       
       // EXTINCTION EVENTS
       const extinctionChance = this._calculateExtinctionRisk(civ, cs);
