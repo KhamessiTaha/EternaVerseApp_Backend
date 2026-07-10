@@ -13,6 +13,8 @@ const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils
 const { applyContact, civDesignation } = require("../utils/contactSystem");
 const requireAdmin = require("../middleware/adminMiddleware");
 const { ensureMissions, claimMission } = require("../utils/missionSystem");
+const { awardAchievements } = require("../utils/achievements");
+const User = require("../models/User");
 
 router.use(verifyToken);
 
@@ -222,6 +224,8 @@ router.post("/:id/simulate", async (req, res) => {
       console.log(`🌑 Universe ended: ${uni.endCondition} - ${uni.endReason}`);
     }
 
+    const newAchievements = await awardAchievements(User, req.user.id, uni);
+
     return res.json({
       ok: true,
       steps: result.steps,
@@ -234,6 +238,7 @@ router.post("/:id/simulate", async (req, res) => {
       hasEnded: uni.status === "ended",
       endCondition: uni.endCondition,
       endReason: uni.endReason,
+      newAchievements,
       universe: uni
     });
   } catch (err) {
@@ -402,12 +407,15 @@ router.post("/:id/discoveries", async (req, res) => {
       console.log(`🔭 ${accepted.length} discoveries (+${earned} RP) in ${uni.name}`);
     }
 
+    const newAchievements = accepted.length > 0 ? await awardAchievements(User, req.user.id, uni) : [];
+
     return res.json({
       ok: true,
       accepted: accepted.map((d) => d.id),
       duplicates,
       rejected,
-      research: uni.research
+      research: uni.research,
+      newAchievements
     });
   } catch (err) {
     console.error("Discoveries error:", err);
@@ -451,7 +459,9 @@ router.post("/:id/claim-mission", async (req, res) => {
 
     console.log(`🎯 Mission claimed in ${uni.name}: ${result.mission.title} (+${result.reward} RP)`);
 
-    return res.json({ ok: true, reward: result.reward, title: result.mission.title, universe: uni });
+    const newAchievements = await awardAchievements(User, req.user.id, uni);
+
+    return res.json({ ok: true, reward: result.reward, title: result.mission.title, newAchievements, universe: uni });
   } catch (err) {
     console.error("Claim mission error:", err);
     return res.status(500).json({ ok: false, error: "Claim failed" });
@@ -494,12 +504,15 @@ router.post("/:id/contact-civilization", async (req, res) => {
 
     console.log(`🛸 Contact [${action}/${result.outcome}] with ${civDesignation(civId)} in ${uni.name}`);
 
+    const newAchievements = await awardAchievements(User, req.user.id, uni);
+
     return res.json({
       ok: true,
       outcome: result.outcome,
       message: result.message,
       cost: result.cost ?? 0,
       reward: result.reward ?? 0,
+      newAchievements,
       universe: uni
     });
   } catch (err) {
@@ -541,10 +554,13 @@ router.post("/:id/upgrade", async (req, res) => {
 
     console.log(`🔧 ${check.label} Mk ${check.nextLevel} installed (-${check.cost} RP) in ${uni.name}`);
 
+    const newAchievements = await awardAchievements(User, req.user.id, uni);
+
     return res.json({
       ok: true,
       upgrades: uni.upgrades,
-      research: uni.research
+      research: uni.research,
+      newAchievements
     });
   } catch (err) {
     console.error("Upgrade error:", err);
