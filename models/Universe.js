@@ -200,6 +200,9 @@ const UniverseSchema = new Schema({
   // Dedup history for MINOR (chunk-seeded) anomaly resolutions - ids are
   // deterministic "chunkX:chunkY:index" strings; see utils/minorAnomalies.js
   resolvedMinorAnomalies: { type: [String], default: [] },
+  // Per-kind cooldown timestamps for live cosmic event rewards
+  // (utils/eventRewards.js) - { supernova: ms, comet: ms, derelict: ms }
+  eventRewards: { type: Schema.Types.Mixed, default: {} },
   civilizations: { type: [CivilisationSchema], default: [] },
   significantEvents: { type: [SignificantEventSchema], default: [] },
   milestones: { type: MilestonesSchema, default: () => ({}) },

@@ -15,6 +15,7 @@ const requireAdmin = require("../middleware/adminMiddleware");
 const { ensureMissions, claimMission } = require("../utils/missionSystem");
 const { awardAchievements } = require("../utils/achievements");
 const { applyMinorResolution } = require("../utils/minorAnomalies");
+const { claimEventReward } = require("../utils/eventRewards");
 const User = require("../models/User");
 
 router.use(verifyToken);
@@ -495,6 +496,42 @@ router.post("/:id/resolve-minor", async (req, res) => {
   } catch (err) {
     console.error("Resolve minor anomaly error:", err);
     return res.status(500).json({ ok: false, error: "Resolution failed" });
+  }
+});
+
+// Claim a live cosmic event reward (supernova capture / comet sample /
+// derelict salvage). Rate-limited per event kind server-side - see
+// utils/eventRewards.js for why this is cooldown-trust rather than proof.
+router.post("/:id/event-reward", async (req, res) => {
+  try {
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    if (uni.status === "ended") {
+      return res.status(400).json({ ok: false, error: "Universe already ended" });
+    }
+
+    const result = claimEventReward(uni, req.body.kind);
+    if (!result.ok) {
+      return res.status(400).json({ ok: false, error: result.reason, cooldown: !!result.cooldown });
+    }
+
+    recordEvent(uni, {
+      type: "cosmic_event",
+      description: result.title,
+      effects: { kind: req.body.kind, reward: result.reward }
+    });
+
+    uni.markModified("research");
+    uni.markModified("eventRewards");
+    uni.markModified("significantEvents");
+    uni.lastModified = new Date();
+    await uni.save();
+
+    return res.json({ ok: true, reward: result.reward, title: result.title, universe: uni });
+  } catch (err) {
+    console.error("Event reward error:", err);
+    return res.status(500).json({ ok: false, error: "Claim failed" });
   }
 });
 
