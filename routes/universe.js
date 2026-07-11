@@ -133,7 +133,20 @@ router.get("/:id", async (req, res) => {
   try {
     const uni = await findOwnedUniverse(req, res, { lean: true });
     if (!uni) return;
-    return res.json({ ok: true, universe: uni });
+
+    // "While you were away": hand back the PREVIOUS visit anchors for the
+    // client's digest, then stamp this visit. Fire-and-forget - the stamp
+    // must never delay or fail the load.
+    const previousVisit = {
+      at: uni.lastVisitedAt || null,
+      age: uni.lastVisitAge ?? null,
+    };
+    Universe.updateOne(
+      { _id: uni._id },
+      { lastVisitedAt: new Date(), lastVisitAge: uni.currentState?.age || 0 }
+    ).catch((err) => console.error("Visit stamp failed:", err.message));
+
+    return res.json({ ok: true, universe: uni, previousVisit });
   } catch (err) {
     console.error("Get universe error:", err);
     return res.status(500).json({ ok: false, error: "Server error" });
@@ -194,6 +207,12 @@ router.post("/:id/simulate", async (req, res) => {
     if (ensureMissions(uni) > 0) {
       uni.markModified("missions");
     }
+
+    // Live tick = the player is HERE: keep the visit anchors fresh so the
+    // away-digest window starts when they actually leave. The cron sweep
+    // deliberately never touches these.
+    uni.lastVisitedAt = now;
+    uni.lastVisitAge = uni.currentState?.age || 0;
 
     // ML predictions (after simulation)
     const predictions = new MLPredictor(uni).generatePredictions();

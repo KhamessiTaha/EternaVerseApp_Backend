@@ -203,6 +203,11 @@ const UniverseSchema = new Schema({
   // Per-kind cooldown timestamps for live cosmic event rewards
   // (utils/eventRewards.js) - { supernova: ms, comet: ms, derelict: ms }
   eventRewards: { type: Schema.Types.Mixed, default: {} },
+  // "While you were away" digest anchors: when the player last had this
+  // universe open (entry + live ticks stamp these; the cron sweep never
+  // does) and the universe age at that moment
+  lastVisitedAt: { type: Date, default: null },
+  lastVisitAge: { type: Number, default: null },
   civilizations: { type: [CivilisationSchema], default: [] },
   significantEvents: { type: [SignificantEventSchema], default: [] },
   milestones: { type: MilestonesSchema, default: () => ({}) },
