@@ -15,6 +15,13 @@ const METRICS = {
   classesDiscovered: (uni) => (uni.research?.classesDiscovered || []).length,
   civsObserved: (uni) => (uni.civilizations || []).filter((c) => c.observed).length,
   uplifts: (uni) => sumCivs(uni, (c) => c.uplifts || 0),
+  pacifies: (uni) => sumCivs(uni, (c) => c.pacifies || 0),
+  researchEarned: (uni) => Math.floor(uni.research?.totalEarned || 0),
+  rareFinds: (uni) => (uni.discoveries || []).filter((d) => d.rarity === "rare" || d.rarity === "exceptional").length,
+  worshippers: (uni) => (uni.civilizations || []).filter(
+    (c) => !c.extinct && (c.type === "Type0" || c.type === "Type1") && (c.relationship || 0) >= 0.45
+  ).length,
+  ageMyr: (uni) => Math.floor((uni.currentState?.age || 0) / 1e6),
 };
 
 // `eligible` gates templates that need world state to be achievable (no
@@ -47,6 +54,35 @@ const TEMPLATES = [
     description: "Transfer technology to a civilization [G]. Mind their aggression.",
     eligible: (uni) => (uni.civilizations || []).some((c) => !c.extinct),
   },
+  {
+    id: "pacify", metric: "pacifies", counts: [1, 2], rewardPer: 70,
+    title: (n) => `Broker peace ${n} time${n > 1 ? "s" : ""}`,
+    description: "Pacify aggressive civilizations [G] before they destroy themselves.",
+    eligible: (uni) => (uni.civilizations || []).some((c) => !c.extinct && (c.warlikeness ?? 0) > 0.3),
+  },
+  {
+    id: "research", metric: "researchEarned", counts: [150, 300, 600], rewardPer: 0.3,
+    title: (n) => `Accumulate ${n} research`,
+    description: "Any source counts: scans, surveys, objectives, tribute.",
+  },
+  {
+    id: "rare-finds", metric: "rareFinds", counts: [1, 2], rewardPer: 60,
+    title: (n) => `Catalog ${n} rare-class object${n > 1 ? "s" : ""}`,
+    description: "Scan until you find something the codex flags as rare or exceptional [V].",
+  },
+  {
+    id: "worship", metric: "worshippers", counts: [1], rewardPer: 150,
+    title: () => `Be worshipped by a civilization`,
+    description: "Treat a young civilization well enough [G] that they deify your ship.",
+    eligible: (uni) => (uni.civilizations || []).some(
+      (c) => !c.extinct && (c.type === "Type0" || c.type === "Type1") && (c.relationship || 0) < 0.45
+    ),
+  },
+  {
+    id: "shepherd", metric: "ageMyr", counts: [200, 400, 800], rewardPer: 0.15,
+    title: (n) => `Shepherd the universe through ${n} million years`,
+    description: "Time passes even while you're away - the simulation never sleeps.",
+  },
 ];
 
 const MAX_ACTIVE = 3;
@@ -57,13 +93,34 @@ function metricValue(uni, metric) {
 }
 
 function generateMission(uni, excludeTemplateIds = new Set(), rand = Math.random) {
-  const pool = TEMPLATES.filter(
+  // Variety guard: don't immediately re-issue what the player just finished.
+  // The 2 most recently claimed templates sit out - unless that would leave
+  // nothing to offer.
+  const recentlyClaimed = (uni.missions || [])
+    .filter((m) => m.status === "claimed")
+    .slice(-2)
+    .map((m) => m.templateId);
+
+  let pool = TEMPLATES.filter(
     (t) => !excludeTemplateIds.has(t.id) && (!t.eligible || t.eligible(uni))
   );
+  const varied = pool.filter((t) => !recentlyClaimed.includes(t.id));
+  if (varied.length > 0) pool = varied;
   if (pool.length === 0) return null;
 
   const template = pool[Math.floor(rand() * pool.length)];
-  const n = template.counts[Math.floor(rand() * template.counts.length)];
+
+  // Escalation: each completed run of a template advances it to its next
+  // count tier; past the last tier the count stays but the reward keeps
+  // growing (+20% per extra completion, capped at 2x) - repeats become
+  // bigger asks with bigger payouts instead of identical chores.
+  const timesClaimed = (uni.missions || []).filter(
+    (m) => m.status === "claimed" && m.templateId === template.id
+  ).length;
+  const tier = Math.min(timesClaimed, template.counts.length - 1);
+  const n = template.counts[tier];
+  const overflow = Math.max(0, timesClaimed - (template.counts.length - 1));
+  const rewardMult = Math.min(2, 1 + overflow * 0.2);
   const baseline = metricValue(uni, template.metric);
 
   return {
@@ -74,7 +131,7 @@ function generateMission(uni, excludeTemplateIds = new Set(), rand = Math.random
     metric: template.metric,
     baseline,
     target: baseline + n,
-    reward: template.rewardPer * n,
+    reward: Math.round(template.rewardPer * n * rewardMult),
     status: "active",
     issuedAt: new Date(),
   };
