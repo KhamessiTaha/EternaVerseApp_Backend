@@ -14,6 +14,7 @@ const { applyContact, civDesignation } = require("../utils/contactSystem");
 const requireAdmin = require("../middleware/adminMiddleware");
 const { ensureMissions, claimMission } = require("../utils/missionSystem");
 const { awardAchievements } = require("../utils/achievements");
+const { applyMinorResolution } = require("../utils/minorAnomalies");
 const User = require("../models/User");
 
 router.use(verifyToken);
@@ -449,6 +450,51 @@ router.post("/:id/discoveries", async (req, res) => {
   } catch (err) {
     console.error("Discoveries error:", err);
     return res.status(500).json({ ok: false, error: "Failed to record discoveries" });
+  }
+});
+
+// Resolve a MINOR (chunk-seeded) anomaly. The client names the anomaly by
+// its deterministic id; the server validates the id shape, dedups against
+// persistent history, and computes the (modest) real rewards - including
+// metrics.anomaliesResolved, so minors count toward containment missions.
+router.post("/:id/resolve-minor", async (req, res) => {
+  try {
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    if (uni.status === "ended") {
+      return res.status(400).json({ ok: false, error: "Universe already ended" });
+    }
+
+    const result = applyMinorResolution(uni, {
+      anomalyId: req.body.anomalyId,
+      severity: req.body.severity,
+      accuracy: req.body.accuracy
+    }, CONTAINMENT_BONUS_PER_LEVEL);
+
+    if (!result.ok) {
+      return res.status(400).json({ ok: false, error: result.reason, duplicate: !!result.duplicate });
+    }
+
+    uni.markModified("currentState");
+    uni.markModified("research");
+    uni.markModified("metrics");
+    uni.markModified("resolvedMinorAnomalies");
+    uni.lastModified = new Date();
+    await uni.save();
+
+    const newAchievements = await awardAchievements(User, req.user.id, uni);
+
+    return res.json({
+      ok: true,
+      reward: result.reward,
+      stabilityBoost: result.stabilityBoost,
+      newAchievements,
+      universe: uni
+    });
+  } catch (err) {
+    console.error("Resolve minor anomaly error:", err);
+    return res.status(500).json({ ok: false, error: "Resolution failed" });
   }
 });
 

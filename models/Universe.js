@@ -197,6 +197,9 @@ const UniverseSchema = new Schema({
   research: { type: ResearchSchema, default: () => ({}) },
   upgrades: { type: UpgradesSchema, default: () => ({}) },
   missions: { type: [MissionSchema], default: [] },
+  // Dedup history for MINOR (chunk-seeded) anomaly resolutions - ids are
+  // deterministic "chunkX:chunkY:index" strings; see utils/minorAnomalies.js
+  resolvedMinorAnomalies: { type: [String], default: [] },
   civilizations: { type: [CivilisationSchema], default: [] },
   significantEvents: { type: [SignificantEventSchema], default: [] },
   milestones: { type: MilestonesSchema, default: () => ({}) },
