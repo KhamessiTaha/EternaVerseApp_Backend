@@ -14,6 +14,8 @@ const OBSERVE_REWARDS = { Type0: 25, Type1: 50, Type2: 100, Type3: 200 };
 
 const UPLIFT_BASE_COST = 60;
 const PACIFY_BASE_COST = 50;
+const ARM_COST = 80;
+const BROKER_COST = 120;
 const MAX_USES = 3;
 
 // Chance an uplift backfires = warlikeness * this factor (max 35% at
@@ -127,6 +129,65 @@ function applyContact(universe, civId, action, rand = Math.random) {
     };
   }
 
+  if (action === "arm") {
+    const war = (universe.activeWars || []).find((w) => w.a === civId || w.b === civId);
+    if (!war) return { ok: false, reason: "They are not at war" };
+    const cost = ARM_COST;
+    if (!spendResearch(universe, cost)) {
+      return { ok: false, reason: `Insufficient research (${cost} RP required)` };
+    }
+
+    // Tip the war score, harden them, and make an enemy of their enemy
+    if (war.a === civId) war.scoreA = (war.scoreA || 0) + 45;
+    else war.scoreB = (war.scoreB || 0) + 45;
+    civ.technology = clamp((civ.technology || 0) + 3, 0, 100);
+    shiftRelationship(civ, 0.15);
+
+    const enemyId = war.a === civId ? war.b : war.a;
+    const enemy = (universe.civilizations || []).find((c) => c.id === enemyId);
+    if (enemy) shiftRelationship(enemy, -0.2);
+
+    return {
+      ok: true,
+      action,
+      outcome: "armed",
+      cost,
+      civ,
+      message: `You armed ${name} against ${civDesignation(enemyId)}. ${civDesignation(enemyId)} will remember this.`
+    };
+  }
+
+  if (action === "broker") {
+    const war = (universe.activeWars || []).find((w) => w.a === civId || w.b === civId);
+    if (!war) return { ok: false, reason: "They are not at war" };
+    const cost = BROKER_COST;
+    if (!spendResearch(universe, cost)) {
+      return { ok: false, reason: `Insufficient research (${cost} RP required)` };
+    }
+
+    universe.activeWars = (universe.activeWars || []).filter((w) => w.id !== war.id);
+    const otherId = war.a === civId ? war.b : war.a;
+    for (const id of [civId, otherId]) {
+      const side = (universe.civilizations || []).find((c) => c.id === id);
+      if (!side || side.extinct) continue;
+      side.stability = clamp((side.stability ?? 0.5) + 0.1, 0, 1);
+      side.warlikeness = clamp((side.warlikeness || 0) - 0.1, 0, 1);
+      shiftRelationship(side, 0.2);
+    }
+
+    if (!universe.metrics) universe.metrics = {};
+    universe.metrics.warsBrokered = (universe.metrics.warsBrokered || 0) + 1;
+
+    return {
+      ok: true,
+      action,
+      outcome: "brokered",
+      cost,
+      civ,
+      message: `You brokered peace between ${name} and ${civDesignation(otherId)}. Both fleets are going home.`
+    };
+  }
+
   if (action === "pacify") {
     if ((civ.pacifies || 0) >= MAX_USES) {
       return { ok: false, reason: "Their culture has absorbed all it can" };
@@ -159,6 +220,8 @@ module.exports = {
   OBSERVE_REWARDS,
   UPLIFT_BASE_COST,
   PACIFY_BASE_COST,
+  ARM_COST,
+  BROKER_COST,
   MAX_USES,
   BACKFIRE_FACTOR
 };

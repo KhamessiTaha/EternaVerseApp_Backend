@@ -150,6 +150,9 @@ function advanceUniverse(uni, now = new Date(), options = {}) {
   if (uni.civilizations.length > 0) uni.markModified("civilizations");
   uni.markModified("currentState");
   uni.markModified("metrics");
+  // Mixed-type array: inner mutations (war scores) are invisible to
+  // Mongoose without this
+  if (typeof uni.markModified === "function") uni.markModified("activeWars");
 
   uni.lastModified = now;
   uni.lastSimulatedAt = now;

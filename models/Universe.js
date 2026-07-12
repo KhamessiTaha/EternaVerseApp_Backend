@@ -157,6 +157,7 @@ const MetricsSchema = new Schema({
   playerInterventions: { type: Number, default: 0 },
   anomalyResolutionRate: { type: Number, default: 0 },
   anomaliesResolved: { type: Number, default: 0 },
+  warsBrokered: { type: Number, default: 0 },
   stabilityScore: { type: Number, default: 1.0 },
   stabilityTrend: { type: Number, default: 0 },
   complexityIndex: { type: Number, default: 0 },
@@ -208,6 +209,9 @@ const UniverseSchema = new Schema({
   // does) and the universe age at that moment
   lastVisitedAt: { type: Date, default: null },
   lastVisitAge: { type: Number, default: null },
+  // Interstellar wars in progress (utils/warSystem.js):
+  // [{ id, a: civId, b: civId, scoreA, scoreB, startedAt }]
+  activeWars: { type: [Schema.Types.Mixed], default: [] },
   civilizations: { type: [CivilisationSchema], default: [] },
   significantEvents: { type: [SignificantEventSchema], default: [] },
   milestones: { type: MilestonesSchema, default: () => ({}) },

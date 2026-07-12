@@ -630,6 +630,8 @@ router.post("/:id/contact-civilization", async (req, res) => {
     uni.markModified("civilizations");
     uni.markModified("research");
     uni.markModified("significantEvents");
+    uni.markModified("activeWars"); // arm mutates scores; broker removes entries
+    uni.markModified("metrics");    // broker increments warsBrokered
     uni.lastModified = new Date();
     await uni.save();
 
@@ -888,6 +890,61 @@ router.post("/:id/dev/spawn-anomalies", requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("Dev spawn-anomalies error:", err);
     return res.status(500).json({ ok: false, error: "Spawn failed" });
+  }
+});
+
+// Force-start a war between the two most recently spawned living civs
+router.post("/:id/dev/start-war", requireAdmin, async (req, res) => {
+  try {
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    const alive = (uni.civilizations || []).filter((c) => !c.extinct);
+    if (alive.length < 2) {
+      return res.status(400).json({ ok: false, error: "Need 2+ living civilizations (spawn some first)" });
+    }
+
+    const [a, b] = alive.slice(-2);
+    if (!Array.isArray(uni.activeWars)) uni.activeWars = [];
+    uni.activeWars.push({
+      id: `war_${Date.now()}_dev`,
+      a: a.id, b: b.id, scoreA: 0, scoreB: 0, startedAt: new Date()
+    });
+    recordEvent(uni, {
+      type: "war",
+      description: `War erupts between ${civDesignation(a.id)} and ${civDesignation(b.id)}. Both fleets are burning fuel toward the frontier.`,
+      effects: { outcome: "outbreak", a: a.id, b: b.id }
+    });
+
+    uni.markModified("activeWars");
+    uni.markModified("significantEvents");
+    await uni.save();
+
+    console.log(`🛠️ [DEV] War started in ${uni.name}`);
+    return res.json({ ok: true, universe: uni });
+  } catch (err) {
+    console.error("Dev start-war error:", err);
+    return res.status(500).json({ ok: false, error: "War failed to start (ironic)" });
+  }
+});
+
+// Rewind the visit anchors so the NEXT entry into this universe shows the
+// "while you were away" digest (pair with fast-forward to generate events
+// inside the window)
+router.post("/:id/dev/rewind-visit", requireAdmin, async (req, res) => {
+  try {
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    uni.lastVisitedAt = new Date(Date.now() - 2 * 3600 * 1000); // "2 hours ago"
+    uni.lastVisitAge = Math.max(0, (uni.currentState?.age || 0) - 0.5e9);
+    await uni.save();
+
+    console.log(`🛠️ [DEV] Visit anchors rewound for ${uni.name}`);
+    return res.json({ ok: true, universe: uni });
+  } catch (err) {
+    console.error("Dev rewind-visit error:", err);
+    return res.status(500).json({ ok: false, error: "Rewind failed" });
   }
 });
 

@@ -1,6 +1,7 @@
 const seedrandom = require("seedrandom");
 const { recordEvent } = require("./eventLog");
 const { civDesignation, civAttitude } = require("./contactSystem");
+const { tickWars } = require("./warSystem");
 
 /**
  * Enhanced PhysicsEngine with improved civilization lifecycle management
@@ -491,7 +492,13 @@ class PhysicsEngine {
 
   _evolveCivilizations(dt, ageGyr) {
     const cs = this.universe.currentState;
-    
+
+    // Interstellar wars: start/progress/resolve once per step (warSystem);
+    // the player can tip or end them through First Contact
+    for (const ev of tickWars(this.universe, () => this._rand())) {
+      this._recordSignificantEvent("war", ev.description, ev.effects);
+    }
+
     for (const civ of this.universe.civilizations) {
       if (civ.extinct) continue;
       

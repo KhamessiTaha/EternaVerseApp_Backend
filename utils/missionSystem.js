@@ -22,6 +22,7 @@ const METRICS = {
     (c) => !c.extinct && (c.type === "Type0" || c.type === "Type1") && (c.relationship || 0) >= 0.45
   ).length,
   ageMyr: (uni) => Math.floor((uni.currentState?.age || 0) / 1e6),
+  warsBrokered: (uni) => uni.metrics?.warsBrokered || 0,
 };
 
 // `eligible` gates templates that need world state to be achievable (no
@@ -82,6 +83,12 @@ const TEMPLATES = [
     id: "shepherd", metric: "ageMyr", counts: [200, 400, 800], rewardPer: 0.15,
     title: (n) => `Shepherd the universe through ${n} million years`,
     description: "Time passes even while you're away - the simulation never sleeps.",
+  },
+  {
+    id: "war-broker", metric: "warsBrokered", counts: [1], rewardPer: 140,
+    title: () => `Broker an end to a war`,
+    description: "Two civilizations are killing each other [G]. Make them stop.",
+    eligible: (uni) => (uni.activeWars || []).length > 0,
   },
 ];
 
