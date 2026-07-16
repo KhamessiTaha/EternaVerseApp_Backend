@@ -298,7 +298,9 @@ class PhysicsEngine {
     if (ageGyr > 3 && cs.habitableSystemsCount > 100) {
       const timeFactor = this._clamp((ageGyr - 3) / 5, 0, 1);
       const temperatureFactor = this._getTemperatureSuitability();
-      const lifeProbPerHabitable = 1e-8 * timeFactor * metallicityFactor * temperatureFactor;
+      // Was 1e-8: life-bearing worlds accumulated so slowly the civ-spawn
+      // threshold below was decades of wall-clock away
+      const lifeProbPerHabitable = 1e-7 * timeFactor * metallicityFactor * temperatureFactor;
       
       const deltaLife = cs.habitableSystemsCount * lifeProbPerHabitable * (dt / 1e8);
       cs.lifeBearingPlanetsCount = Math.max(0, cs.lifeBearingPlanetsCount + deltaLife);
@@ -323,8 +325,12 @@ class PhysicsEngine {
     
     if (ageGyr < 5 || cs.lifeBearingPlanetsCount < 1000) return;
 
-    // 1. CALCULATE EXPECTED CIVILIZATIONS (not actual spawning)
-    const civProb = 1e-7 * (1 + cs.metallicity * 0.5);
+    // 1. CALCULATE EXPECTED CIVILIZATIONS (not actual spawning).
+    // Was 1e-7: one civilization per TEN MILLION life-bearing planets -
+    // natural civs effectively never emerged (every civ in the game came
+    // from the dev console). Now one per ~10k, so the life era actually
+    // produces societies on its own.
+    const civProb = 1e-4 * (1 + cs.metallicity * 0.5);
     const expectedCivs = Math.floor(cs.lifeBearingPlanetsCount * civProb);
     
     // 2. ENFORCE HARD CAP
@@ -503,30 +509,57 @@ class PhysicsEngine {
       if (civ.extinct) continue;
       
       civ.age += dt;
-      
-      // Technology advancement
-      const techGrowth = 0.01 * (dt / 1e8) * (1 + (civ.developmentLevel ?? 0));
+
+      // Technology advancement. Was 0.01 (~0.003/step): a civ's tech was
+      // effectively frozen within any session and Type thresholds took
+      // days of continuous simulation. Now ~0.02-0.06/step: visibly moves
+      // every catch-up batch, thresholds reachable through the sweep.
+      const techGrowth = 0.08 * (dt / 1e8) * (1 + (civ.developmentLevel ?? 0));
       civ.technology = Math.min(100, (civ.technology ?? 0) + techGrowth);
 
-      // Resource depletion (increases with technology). Coalesce: civs saved
-      // before these fields existed in the schema load without them, and
-      // undefined + n would poison the whole civ with NaN.
-      civ.resourceDepletion = Math.min(1, (civ.resourceDepletion ?? 0) + techGrowth * 0.005);
+      // Resource depletion: consumption scales with how advanced and
+      // populous they are (the old formula tracked tech GROWTH RATE and
+      // moved ~1%/day of wall-clock - effectively frozen). The Kardashev
+      // payoff: Type II+ civs tap stellar energy and slowly REVERSE their
+      // depletion - uplifting a strained civ to Type II genuinely saves it.
+      // stepScale normalizes across difficulty time steps.
+      const stepScale = dt / 2e7;
+      if (civ.type === "Type2" || civ.type === "Type3") {
+        civ.resourceDepletion = Math.max(0, (civ.resourceDepletion ?? 0) - 0.0015 * stepScale);
+      } else {
+        const consumption =
+          (((civ.technology ?? 0) / 100) * 0.0012 + 0.0002) *
+          (1 + (civ.population || 0) / 5e9);
+        civ.resourceDepletion = Math.min(1, (civ.resourceDepletion ?? 0) + consumption * stepScale);
+      }
       
-      // Type progression
-      if (civ.technology > 20 && civ.type === "Type0" && this._rand() < 0.001) {
+      // Population: grows under stability, shrinks under collapse. There
+      // was NO growth mechanic before - populations only ever fell (wars,
+      // events), so the number was a static label most of the time.
+      const popDrift = 1 + 0.004 * stepScale * ((civ.stability ?? 0.5) - 0.4);
+      civ.population = Math.floor(this._clamp((civ.population || 1e6) * popDrift, 1e4, 2e10));
+
+      // Temperament drift: personalities wander slightly over time instead
+      // of being fixed at birth forever
+      civ.warlikeness = this._clamp((civ.warlikeness ?? 0.5) + this._gaussianRandom(0, 0.003), 0, 1);
+
+      // Type progression. Old odds once tech-qualified: Type I ~8h of
+      // continuous sim, Type II ~3.5 DAYS, Type III ~35 DAYS - transcendence
+      // (and the Vanguard hull) was unreachable in practice. New odds:
+      // ~1.7h / ~7h / ~21h of qualified simulation - rare, but real.
+      if (civ.technology > 20 && civ.type === "Type0" && this._rand() < 0.005) {
         civ.type = "Type1";
         this._recordSignificantEvent("civilization", "Type I Civilization Achieved", {
           civilizationId: civ.id,
           description: "A civilization has achieved planetary energy mastery"
         });
-      } else if (civ.technology > 50 && civ.type === "Type1" && this._rand() < 0.0001) {
+      } else if (civ.technology > 50 && civ.type === "Type1" && this._rand() < 0.0012) {
         civ.type = "Type2";
         this._recordSignificantEvent("civilization", "Type II Civilization Achieved", {
           civilizationId: civ.id,
           description: "A civilization has achieved stellar energy mastery"
         });
-      } else if (civ.technology > 80 && civ.type === "Type2" && this._rand() < 0.00001) {
+      } else if (civ.technology > 80 && civ.type === "Type2" && this._rand() < 0.0004) {
         civ.type = "Type3";
         this._recordSignificantEvent("civilization", "Type III Civilization Achieved", {
           civilizationId: civ.id,
@@ -592,12 +625,13 @@ class PhysicsEngine {
 
   _calculateExtinctionRisk(civ, cosmicState) {
     let baseRisk = 1e-5; // 0.001% per step
-    
-    // Low stability increases risk dramatically
-    if (civ.stability < 0.3) {
-      baseRisk *= (1 - civ.stability) * 50;
-    } else if (civ.stability < 0.1) {
+
+    // Low stability increases risk dramatically. NOTE: the <0.1 branch must
+    // come first - it was previously shadowed by <0.3 and unreachable.
+    if (civ.stability < 0.1) {
       baseRisk *= 100; // Almost certain extinction
+    } else if (civ.stability < 0.3) {
+      baseRisk *= (1 - civ.stability) * 50;
     }
     
     // Resource depletion is dangerous
@@ -684,8 +718,11 @@ class PhysicsEngine {
   _checkCatastrophicEvents(ageGyr) {
     const cs = this.universe.currentState;
     
-    // Great Filter event (rare mass extinction)
-    if (this._rand() < 1e-6 && !this.milestones.greatFilter) {
+    // Great Filter event (rare mass extinction). Was 1e-6/step (~1M steps,
+    // i.e. ~1 wall-clock YEAR of continuous simulation) - a dead milestone.
+    // Now ~2e-5 with the existing 10+ active-civ requirement: rare, dreaded,
+    // but genuinely possible in a mature universe.
+    if (this._rand() < 2e-5 && !this.milestones.greatFilter) {
       const activeCivs = this.universe.civilizations.filter(c => !c.extinct);
       const killCount = Math.floor(activeCivs.length * (0.5 + this._rand() * 0.4));
       
