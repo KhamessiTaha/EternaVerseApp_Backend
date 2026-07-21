@@ -2,6 +2,8 @@
 
 **Server-authoritative simulation engine** for [EternaVerse](https://github.com/KhamessiTaha/EternaVerseApp), a browser-based universe simulation game. Every universe is a persistent, continuously evolving world — advanced by a scheduled sweep rather than an always-on server, so it runs entirely on free-tier infrastructure.
 
+**▶ Play the game:** [eterna-verse-app.vercel.app](https://eterna-verse-app.vercel.app/)
+
 > 🔒 **Proprietary — commercial project in active development.** This repository is published for portfolio and demonstration purposes. The source is **not** open for reuse, redistribution, or self-hosting. See [copyright](#copyright).
 
 ---
