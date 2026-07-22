@@ -10,6 +10,7 @@ const PhysicsEngine = require("./physicsEngine");
 const AnomalyGenerator = require("./anomalyGenerator");
 const EndConditions = require("./endConditions");
 const { recordEvent } = require("./eventLog");
+const { difficultyStability } = require("./stabilityConfig");
 
 // How much real-world time one simulation step represents. The universe
 // advances based on wall-clock time since it was last simulated, capped at
@@ -114,8 +115,12 @@ function advanceUniverse(uni, now = new Date(), options = {}) {
 
   const createdAnomalies = [];
 
+  const stab = difficultyStability(uni.difficulty || "Intermediate");
+  const offline = !!options.offline;
+  EndChecker.options.crisisWindow = stab.crisisWindow;
+
   for (let i = 0; i < steps; i++) {
-    Physics.simulateStep();
+    Physics.simulateStep(); // expansion/structures/life + ceiling + metrics
 
     const newAnomalies = AnomalyGen.generateAnomalies();
     if (newAnomalies.length > 0) {
@@ -131,8 +136,15 @@ function advanceUniverse(uni, now = new Date(), options = {}) {
       createdAnomalies.push(...newAnomalies);
     }
 
-    AnomalyGen.decayUnresolvedAnomalies();
-    Physics._updateStability();
+    // Neglected anomalies escalate and spread (replaces severity-decay)
+    AnomalyGen.escalateAndSpread();
+
+    // Reservoir drain/regen/crisis for this step's anomaly set
+    Physics.applyStabilityDynamics({
+      offline,
+      drainScale: stab.drainScale,
+      regenScale: stab.regenScale
+    });
 
     EndChecker.options.stabilityHistory = Physics.getStabilityHistory();
     if (EndChecker.checkEndConditions()) {

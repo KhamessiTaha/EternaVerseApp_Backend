@@ -1,4 +1,6 @@
 const seedrandom = require("seedrandom");
+const { recordEvent } = require("./eventLog");
+const STAB = require("./stabilityConfig");
 
 const CHUNK_SIZE = 1000;
 const MAX_ANOMALIES_PER_UNIVERSE = 200; // Hard limit to prevent DB bloat
@@ -316,21 +318,68 @@ class AnomalyGenerator {
     }
   }
 
-  decayUnresolvedAnomalies() {
-    for (const anomaly of this.universe.anomalies) {
-      if (!anomaly.resolved && anomaly.decayRate) {
-        if (this._rand() < anomaly.decayRate) {
-          if (anomaly.severity > 1) {
-            anomaly.severity -= 0.1;
-            this.universe.currentState.stabilityIndex = this._clamp(
-              this.universe.currentState.stabilityIndex + 0.001,
-              0,
-              1
-            );
-          }
-        }
+  // Neglected anomalies get WORSE, not better: age each unresolved anomaly,
+  // bump severity at each threshold crossing, and let severe ones spawn a
+  // nearby neighbor (contagion). Runs once per step. Returns spawned anomalies.
+  escalateAndSpread() {
+    const anomalies = this.universe.anomalies;
+    const spawned = [];
+
+    for (const a of anomalies) {
+      if (a.resolved) continue;
+
+      a.stepsUnresolved = (a.stepsUnresolved || 0) + 1;
+
+      if (a.stepsUnresolved % STAB.ESCALATION_STEP_THRESHOLD === 0 && a.severity < 5) {
+        a.severity += 1;
+        recordEvent(this.universe, {
+          type: "anomaly_escalated",
+          description: `${a.description || a.type} intensified to severity ${a.severity}`,
+          effects: { anomalyId: a.id, severity: a.severity }
+        });
+      }
+
+      if (a.severity >= STAB.SPREAD_SEVERITY_MIN
+          && this._rand() < STAB.SPREAD_CHANCE_PER_STEP
+          && anomalies.length + spawned.length < MAX_ANOMALIES_PER_UNIVERSE) {
+        spawned.push(this._spawnNeighbor(a));
       }
     }
+
+    if (spawned.length > 0) {
+      anomalies.push(...spawned);
+      recordEvent(this.universe, {
+        type: "anomaly_spread",
+        description: `${spawned.length} new anomal${spawned.length === 1 ? "y" : "ies"} spread from unstable regions`,
+        effects: { count: spawned.length }
+      });
+    }
+
+    return spawned;
+  }
+
+  // A contagion child near its parent, two severity steps weaker, carrying no
+  // instant cosmic effect - its danger is the ongoing drain and further growth.
+  _spawnNeighbor(parent) {
+    const angle = this._rand() * Math.PI * 2;
+    const dist = (0.5 + this._rand() * 1.5) * CHUNK_SIZE;
+    const px = parent.location?.x || 0;
+    const py = parent.location?.y || 0;
+    const severity = Math.max(1, (parent.severity || 2) - 2);
+    return {
+      id: this.options.anomalyIdFactory(),
+      type: parent.type,
+      category: parent.category,
+      severity,
+      timestamp: new Date(),
+      resolved: false,
+      effectsRaw: {},
+      location: { x: px + Math.cos(angle) * dist, y: py + Math.sin(angle) * dist, z: (this._rand() - 0.5) * 1e4 },
+      radius: 1000 * severity,
+      description: parent.description,
+      decayRate: 0,
+      stepsUnresolved: 0,
+    };
   }
 
   // rewardMultiplier: ship-upgrade bonus (Containment Rig), computed by the
@@ -352,11 +401,13 @@ class AnomalyGenerator {
 
     const cs = this.universe.currentState;
 
-    const baseBoost = 0.015;
     const severityMultiplier = anomaly.severity;
-    const stabilityBoost = baseBoost * severityMultiplier * totalMultiplier;
+    const stabilityBoost = STAB.RESOLVE_REFILL_PER_SEVERITY * severityMultiplier * totalMultiplier;
 
-    cs.stabilityIndex = this._clamp(cs.stabilityIndex + stabilityBoost, 0, 1);
+    // Clamp to the health-derived ceiling, not a flat 1.0. Persists because
+    // nothing recomputes the reservoir from scratch anymore.
+    const ceiling = cs.stabilityCeiling ?? 1;
+    cs.stabilityIndex = this._clamp(cs.stabilityIndex + stabilityBoost, 0, ceiling);
 
     const entropyReduction = 3e6 * severityMultiplier * totalMultiplier;
     cs.entropy = Math.max(0, cs.entropy - entropyReduction);

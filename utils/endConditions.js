@@ -25,27 +25,21 @@ class EndConditions {
     
     // Adjust thresholds based on difficulty (higher difficulty = easier to end)
     const diffMod = this.options.difficultyModifier ?? 1.0;
-    const stabilityThreshold = 0.05 / diffMod; // FIXED: Was 0.01, now 0.05 base (more forgiving)
     const heatDeathAge = 200 / diffMod; // FIXED: Was 150, now 200 (longer lifespan)
-    
-    // Critical instability (sustained low stability)
-    if (cs.stabilityIndex < stabilityThreshold) {
-      // Check if stability has been low for multiple steps
-      const recentStability = this.options.stabilityHistory.slice(-10); // FIXED: check more history
-      
-      if (recentStability.length >= 10) {
-        const avgRecent = recentStability.reduce((a, b) => a + b, 0) / recentStability.length;
-        
-        if (avgRecent < stabilityThreshold * 2) { // FIXED: Was 1.5, now 2.0 (more forgiving)
-          this.universe.status = "ended";
-          this.universe.endCondition = "instability-collapse";
-          this.universe.endReason = `Sustained stability below ${(stabilityThreshold * 100).toFixed(1)}% for extended period`;
-          this.universe.finalAge = ageGyr;
-          return true;
-        }
-      }
+
+    // Instability collapse: the reservoir has held critical (< threshold) for
+    // longer than this difficulty tolerates. criticalSteps is maintained by
+    // PhysicsEngine.applyStabilityDynamics and never increments offline, so a
+    // universe can't collapse from the cron sweep alone.
+    const crisisWindow = this.options.crisisWindow ?? 12;
+    if ((cs.criticalSteps || 0) >= crisisWindow) {
+      this.universe.status = "ended";
+      this.universe.endCondition = "instability-collapse";
+      this.universe.endReason = "Stability held critical for too long — cosmic structure unravelled";
+      this.universe.finalAge = ageGyr;
+      return true;
     }
-    
+
     // Heat death (extreme age AND low energy)
     // FIXED: Both conditions must be true, not just age
     if (ageGyr > heatDeathAge && cs.energyBudget < 0.05) {
@@ -107,16 +101,17 @@ class EndConditions {
     const warnings = [];
     
     const diffMod = this.options.difficultyModifier ?? 1.0;
-    const stabilityThreshold = 0.05 / diffMod;
     const heatDeathAge = 200 / diffMod;
 
-    // Stability warning
-    if (cs.stabilityIndex < stabilityThreshold * 3 && cs.stabilityIndex > stabilityThreshold) {
+    // Instability / crisis warning: the reservoir is critical and the collapse
+    // counter is running.
+    if ((cs.criticalSteps || 0) > 0) {
+      const crisisWindow = this.options.crisisWindow ?? 12;
       warnings.push({
-        severity: "high",
-        type: "stability",
-        message: `Stability approaching critical threshold (${(cs.stabilityIndex * 100).toFixed(1)}%)`,
-        recommendation: "Resolve anomalies immediately to restore stability"
+        severity: "critical",
+        type: "instability",
+        message: `Cosmic instability critical (${cs.criticalSteps}/${crisisWindow} steps) — collapse imminent`,
+        recommendation: "Resolve anomalies immediately to restore stability above 25%"
       });
     }
 
@@ -174,10 +169,11 @@ class EndConditions {
 
     return {
       instabilityCollapse: {
-        triggered: cs.stabilityIndex < (0.05 / diffMod),
-        threshold: (0.05 / diffMod) * 100,
-        current: cs.stabilityIndex * 100,
-        percentToThreshold: (cs.stabilityIndex / (0.05 / diffMod)) * 100
+        triggered: (cs.criticalSteps || 0) >= (this.options.crisisWindow ?? 12),
+        criticalSteps: cs.criticalSteps || 0,
+        crisisWindow: this.options.crisisWindow ?? 12,
+        currentStability: (cs.stabilityIndex ?? 1) * 100,
+        percentToThreshold: ((cs.criticalSteps || 0) / (this.options.crisisWindow ?? 12)) * 100
       },
       heatDeath: {
         triggered: ageGyr > (200 / diffMod) && cs.energyBudget < 0.05,

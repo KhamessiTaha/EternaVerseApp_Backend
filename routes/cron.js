@@ -36,7 +36,9 @@ router.post("/sweep", async (req, res) => {
 
     for (const uni of universes) {
       try {
-        const result = advanceUniverse(uni, now);
+        // The sweep runs while the owner is away: reduced drain, floored, and
+        // it can never enter CRITICAL or collapse a universe (see stabilityConfig).
+        const result = advanceUniverse(uni, now, { offline: true });
         if (result.steps > 0) {
           await uni.save();
           advanced++;

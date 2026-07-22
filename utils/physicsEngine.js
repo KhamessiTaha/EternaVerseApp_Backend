@@ -1,6 +1,7 @@
 const seedrandom = require("seedrandom");
 const { recordEvent } = require("./eventLog");
 const { civDesignation, civAttitude } = require("./contactSystem");
+const STAB = require("./stabilityConfig");
 const { tickWars } = require("./warSystem");
 
 /**
@@ -74,6 +75,10 @@ class PhysicsEngine {
     cs.cosmicPhase = cs.cosmicPhase ?? "dark_ages";
     cs.stellarGenerations = cs.stellarGenerations ?? 0;
     cs.energyBudget = cs.energyBudget ?? 1.0;
+
+    // Persistent-reservoir bookkeeping
+    cs.criticalSteps = cs.criticalSteps ?? 0;
+    cs.stabilityCeiling = cs.stabilityCeiling ?? 1.0;
 
     if (!Array.isArray(this.universe.anomalies)) this.universe.anomalies = [];
     if (!Array.isArray(this.universe.significantEvents)) this.universe.significantEvents = [];
@@ -806,39 +811,90 @@ class PhysicsEngine {
     }
   }
 
-  _updateStability() {
+  // Ceiling + slow metrics. Runs every step (inside simulateStep). Does NOT
+  // touch the reservoir - anomalies drain it directly in applyStabilityDynamics.
+  _updateCeilingAndMetrics() {
     const cs = this.universe.currentState;
 
     const entropyFactor = this._calculateEntropyFactor();
     const structureFactor = this._calculateStructureFactor();
     const darkEnergyFactor = this._calculateDarkEnergyFactor();
     const temperatureFactor = this._getTemperatureSuitability();
-    const anomalyFactor = this._calculateAnomalyFactor();
     const energyFactor = cs.energyBudget;
 
-    let rawStability = 
+    // Old six-factor formula minus its 0.20 anomaly term, renormalized to
+    // [0,1]: "how healthy is the cosmology, ignoring anomalies". This is the
+    // ceiling the reservoir can regenerate toward.
+    const ceilingHealth = (
       0.15 * entropyFactor +
       0.25 * structureFactor +
       0.15 * darkEnergyFactor +
       0.15 * temperatureFactor +
-      0.20 * anomalyFactor +
-      0.10 * energyFactor;
+      0.10 * energyFactor
+    ) / 0.80;
 
-    const diffMod = this.options.difficultyModifier ?? 1.0;
-    rawStability = rawStability * (0.6 + 0.4 / diffMod);
+    cs.stabilityCeiling = this._clamp(
+      STAB.CEILING_BASE + STAB.CEILING_SPAN * this._clamp(ceilingHealth, 0, 1),
+      0, 1
+    );
 
-    cs.stabilityIndex = this._clamp(rawStability, 0, 1);
-    
-    this.stabilityHistory.push(cs.stabilityIndex);
-    if (this.stabilityHistory.length > this.maxHistoryLength) {
-      this.stabilityHistory.shift();
-    }
-
-    this.universe.metrics.stabilityScore = cs.stabilityIndex;
-    this.universe.metrics.stabilityTrend = this._calculateStabilityTrend();
     this.universe.metrics.complexityIndex = this._calculateComplexityIndex();
     this.universe.metrics.lifePotentialIndex = this._calculateLifePotentialIndex();
     this.universe.metrics.cosmicHealth = this._calculateCosmicHealth();
+  }
+
+  // Reservoir update: drain from active anomalies, regen when calm, crisis
+  // tracking. Runs ONCE per step in the runner, after anomalies are generated
+  // and escalated. `offline` (cron sweep) softens drain, floors it, and never
+  // arms the crisis counter.
+  applyStabilityDynamics(options = {}) {
+    const cs = this.universe.currentState;
+    const offline = !!options.offline;
+    const drainScale = options.drainScale ?? 1.0;
+    const regenScale = options.regenScale ?? 1.0;
+
+    const prev = cs.stabilityIndex ?? 1;
+    const ceiling = cs.stabilityCeiling ?? 1;
+    const active = this.universe.anomalies.filter(a => !a.resolved);
+
+    let drain = active.reduce(
+      (sum, a) => sum + STAB.STABILITY_DRAIN_PER_SEVERITY * (a.severity || 1),
+      0
+    ) * drainScale;
+
+    if (offline) drain *= STAB.OFFLINE_DRAIN_SCALE;
+    else if (prev < STAB.CRITICAL_THRESHOLD) drain *= STAB.CRITICAL_DRAIN_MULTIPLIER;
+
+    const regen = (active.length <= STAB.REGEN_ANOMALY_THRESHOLD && prev < ceiling)
+      ? STAB.STABILITY_REGEN * regenScale
+      : 0;
+
+    let next = this._clamp(prev - drain + regen, 0, ceiling);
+    if (offline) {
+      // Offline drain may lower toward the floor but never below it, and never
+      // lifts a universe already parked below the floor.
+      next = Math.max(next, Math.min(prev, STAB.OFFLINE_FLOOR));
+    }
+    cs.stabilityIndex = next;
+
+    if (!offline) {
+      if (next < STAB.CRITICAL_THRESHOLD) cs.criticalSteps = (cs.criticalSteps || 0) + 1;
+      else if (next > STAB.CRISIS_CLEAR_THRESHOLD) cs.criticalSteps = 0;
+      // between the two thresholds: hold the counter (hysteresis)
+    }
+
+    this.stabilityHistory.push(next);
+    if (this.stabilityHistory.length > this.maxHistoryLength) this.stabilityHistory.shift();
+
+    this.universe.metrics.stabilityScore = next;
+    this.universe.metrics.stabilityTrend = this._calculateStabilityTrend();
+  }
+
+  // Back-compat: standalone callers (simulateSteps, ml/generate_dataset.js)
+  // that don't run the runner loop still get a moving reservoir.
+  _updateStability() {
+    this._updateCeilingAndMetrics();
+    this.applyStabilityDynamics({});
   }
 
   _calculateEntropyFactor() {
@@ -949,7 +1005,10 @@ class PhysicsEngine {
     this._updateExpansion();
     this._updateStructures();
     this._updateLifeEvolution();
-    this._updateStability();
+    // Ceiling + metrics only. The reservoir (drain/regen/crisis) is advanced
+    // once per step by the runner via applyStabilityDynamics, after anomalies
+    // for this step have been generated and escalated.
+    this._updateCeilingAndMetrics();
 
     this.universe.lastModified = new Date();
 

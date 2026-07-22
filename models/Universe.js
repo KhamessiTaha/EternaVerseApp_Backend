@@ -18,7 +18,9 @@ const AnomalySchema = new Schema({
   },
   radius: { type: Number, default: 0 },
   description: { type: String },
-  decayRate: { type: Number, default: 0 }
+  decayRate: { type: Number, default: 0 },
+  // Steps this anomaly has spent unresolved - drives escalation/spread
+  stepsUnresolved: { type: Number, default: 0, min: 0 }
 }, { _id: false });
 
 const DiscoverySchema = new Schema({
@@ -150,7 +152,12 @@ const CurrentStateSchema = new Schema({
     default: "dark_ages" 
   },
   stellarGenerations: { type: Number, default: 0, min: 0 },
-  energyBudget: { type: Number, default: 1.0, min: 0, max: 1 }
+  energyBudget: { type: Number, default: 1.0, min: 0, max: 1 },
+  // Persistent reservoir model (see utils/stabilityConfig.js): consecutive
+  // steps spent below the critical threshold (arms collapse), and the
+  // health-derived ceiling the reservoir regenerates toward.
+  criticalSteps: { type: Number, default: 0, min: 0 },
+  stabilityCeiling: { type: Number, default: 1, min: 0, max: 1 }
 }, { _id: false });
 
 const MetricsSchema = new Schema({
