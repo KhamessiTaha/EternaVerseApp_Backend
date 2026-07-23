@@ -10,6 +10,7 @@ const { recordEvent } = require("../utils/eventLog");
 const { prepareDiscoveries } = require("../utils/discoveryValidator");
 const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgradeCatalog");
 const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils/simulationRunner");
+const { difficultyStability } = require("../utils/stabilityConfig");
 const { applyContact, civDesignation } = require("../utils/contactSystem");
 const requireAdmin = require("../middleware/adminMiddleware");
 const { ensureMissions, claimMission } = require("../utils/missionSystem");
@@ -836,11 +837,31 @@ router.post("/:id/dev/fast-forward", requireAdmin, async (req, res) => {
     }
 
     const steps = Math.max(1, Math.min(500, Math.floor(Number(req.body.steps) || 1)));
+    // Snapshot the reservoir before advancing so the dev console can show the
+    // exact stability trajectory a jump produced (the whole point of the tool
+    // is watching drain / escalation / crisis build across a fast-forward).
+    const stabilityBefore = uni.currentState.stabilityIndex;
     const result = advanceUniverse(uni, new Date(), { forceSteps: steps });
     await uni.save();
 
+    const cs = uni.currentState;
     console.log(`🛠️ [DEV] Fast-forwarded ${uni.name} by ${result.steps} steps`);
-    return res.json({ ok: true, steps: result.steps, stats: result.Physics.getStatistics(), universe: uni });
+    return res.json({
+      ok: true,
+      steps: result.steps,
+      stability: {
+        before: stabilityBefore,
+        after: cs.stabilityIndex,
+        ceiling: cs.stabilityCeiling,
+        criticalSteps: cs.criticalSteps || 0,
+        crisisWindow: difficultyStability(uni.difficulty || "Intermediate").crisisWindow,
+        activeAnomalies: (uni.anomalies || []).filter((a) => !a.resolved).length,
+      },
+      ended: uni.status === "ended",
+      endCondition: uni.endCondition || null,
+      stats: result.Physics.getStatistics(),
+      universe: uni,
+    });
   } catch (err) {
     console.error("Dev fast-forward error:", err);
     return res.status(500).json({ ok: false, error: "Fast-forward failed" });
