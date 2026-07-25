@@ -12,6 +12,10 @@ const EndConditions = require("./endConditions");
 const { recordEvent } = require("./eventLog");
 const { difficultyStability } = require("./stabilityConfig");
 
+
+
+const { generatePetitions, expirePetitions } = require("./petitionSystem");
+
 // How much real-world time one simulation step represents. The universe
 // advances based on wall-clock time since it was last simulated, capped at
 // MAX_STEPS per call (~50 min of catch-up) so a long-abandoned universe
@@ -145,6 +149,16 @@ function advanceUniverse(uni, now = new Date(), options = {}) {
       drainScale: stab.drainScale,
       regenScale: stab.regenScale
     });
+
+    // Civilizations petition the player, and unanswered ones resolve the hard
+    // way. Uses the persistent simStep so deadlines survive across calls.
+    uni.simStep = (uni.simStep || 0) + 1;
+    for (const ev of generatePetitions(uni, uni.simStep, () => Math.random())) {
+      recordEvent(uni, { type: "civilization", description: `${ev.petition.civName} petitions the sky-vessel.`, effects: { civilizationId: ev.civId } });
+    }
+    for (const ev of expirePetitions(uni, uni.simStep, () => Math.random())) {
+      recordEvent(uni, { type: "civilization", description: ev.description, effects: { civilizationId: ev.civId } });
+    }
 
     EndChecker.options.stabilityHistory = Physics.getStabilityHistory();
     if (EndChecker.checkEndConditions()) {

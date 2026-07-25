@@ -94,7 +94,13 @@ const CivilisationSchema = new Schema({
   pacifies: { type: Number, default: 0, min: 0 },
   // How this civ feels about the player (-1 hostile .. +1 devoted), shifted
   // by contact actions and events; drives attitude (worship/hostile/...)
-  relationship: { type: Number, default: 0, min: -1, max: 1 }
+  relationship: { type: Number, default: 0, min: -1, max: 1 },
+  // Disposition assigned from innate stats; flavors the petitions it raises
+  // (militant / devout / scholarly / mercantile / insular).
+  personality: { type: String, default: null },
+  // Active petition the civ has raised to the player (null when none). Mixed
+  // so the option/outcome shape can evolve without a migration.
+  petition: { type: Schema.Types.Mixed, default: null }
 }, { _id: false });
 
 const SignificantEventSchema = new Schema({
@@ -219,6 +225,9 @@ const UniverseSchema = new Schema({
   // Interstellar wars in progress (utils/warSystem.js):
   // [{ id, a: civId, b: civId, scoreA, scoreB, startedAt }]
   activeWars: { type: [Schema.Types.Mixed], default: [] },
+  // Monotonic simulation-step counter, persisted so time-bounded mechanics
+  // (civ petition deadlines) survive across separate advance/sweep calls.
+  simStep: { type: Number, default: 0 },
   civilizations: { type: [CivilisationSchema], default: [] },
   significantEvents: { type: [SignificantEventSchema], default: [] },
   milestones: { type: MilestonesSchema, default: () => ({}) },

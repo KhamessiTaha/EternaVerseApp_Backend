@@ -12,6 +12,7 @@ const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgr
 const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils/simulationRunner");
 const { difficultyStability } = require("../utils/stabilityConfig");
 const { applyContact, civDesignation } = require("../utils/contactSystem");
+const { respondToPetition } = require("../utils/petitionSystem");
 const requireAdmin = require("../middleware/adminMiddleware");
 const { ensureMissions, claimMission } = require("../utils/missionSystem");
 const { awardAchievements } = require("../utils/achievements");
@@ -652,6 +653,51 @@ router.post("/:id/contact-civilization", async (req, res) => {
   } catch (err) {
     console.error("Contact error:", err);
     return res.status(500).json({ ok: false, error: "Contact failed" });
+  }
+});
+
+// Answer a civilization's petition (utils/petitionSystem.js). Body:
+// { civId, petitionId, optionId }. Server validates the petition is still the
+// live one and applies the chosen outcome.
+router.post("/:id/respond-petition", async (req, res) => {
+  try {
+    const { civId, petitionId, optionId } = req.body;
+    if (!civId || !petitionId || !optionId) {
+      return res.status(400).json({ ok: false, error: "civId, petitionId and optionId required" });
+    }
+
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+    if (uni.status === "ended") {
+      return res.status(400).json({ ok: false, error: "Cannot respond in an ended universe" });
+    }
+
+    const result = respondToPetition(uni, civId, petitionId, optionId);
+    if (!result.ok) {
+      return res.status(400).json({ ok: false, error: result.reason });
+    }
+
+    recordEvent(uni, {
+      type: "contact",
+      description: result.message,
+      effects: { civId, petition: result.kind, optionId }
+    });
+
+    uni.markModified("civilizations");
+    uni.markModified("research");
+    uni.markModified("significantEvents");
+    uni.markModified("activeWars"); // arm/broker options mutate wars
+    uni.markModified("metrics");
+    uni.lastModified = new Date();
+    await uni.save();
+
+    console.log(`📜 Petition [${result.kind}/${optionId}] answered for ${civDesignation(civId)} in ${uni.name}`);
+
+    const newAchievements = await awardAchievements(User, req.user.id, uni);
+    return res.json({ ok: true, kind: result.kind, optionId, message: result.message, newAchievements, universe: uni });
+  } catch (err) {
+    console.error("Petition response error:", err);
+    return res.status(500).json({ ok: false, error: "Petition response failed" });
   }
 });
 
