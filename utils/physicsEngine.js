@@ -554,9 +554,12 @@ class PhysicsEngine {
       // ~1.7h / ~7h / ~21h of qualified simulation - rare, but real.
       if (civ.technology > 20 && civ.type === "Type0" && this._rand() < 0.005) {
         civ.type = "Type1";
-        this._recordSignificantEvent("civilization", "Type I Civilization Achieved", {
+        // A scale ascension: planet-bound -> holding its star system. The
+        // "you met them as primitives, now they've reached the stars" payoff.
+        this._recordSignificantEvent("civilization", "A Civilization Reaches the Stars", {
           civilizationId: civ.id,
-          description: "A civilization has achieved planetary energy mastery"
+          ascension: "stellar",
+          description: `${civDesignation(civ.id)} has left its cradle world — no longer bound to one planet, it now holds its star system.`
         });
       } else if (civ.technology > 50 && civ.type === "Type1" && this._rand() < 0.0012) {
         civ.type = "Type2";
@@ -566,9 +569,12 @@ class PhysicsEngine {
         });
       } else if (civ.technology > 80 && civ.type === "Type2" && this._rand() < 0.0004) {
         civ.type = "Type3";
-        this._recordSignificantEvent("civilization", "Type III Civilization Achieved", {
+        // A scale ascension: stellar -> galactic. They now span, and are
+        // encountered at, the intergalactic scale.
+        this._recordSignificantEvent("civilization", "A Civilization Becomes a Galactic Power", {
           civilizationId: civ.id,
-          description: "A civilization has achieved galactic energy mastery"
+          ascension: "galactic",
+          description: `${civDesignation(civ.id)} has risen to command the energy of its entire galaxy — a power now met among the galaxies themselves.`
         });
         
         if (!this.milestones.transcendence) {
