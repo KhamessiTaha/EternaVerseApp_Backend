@@ -8,6 +8,20 @@ const { OBJECT_CLASSES, ANOMALY_SCAN_BASE } = require("./researchValues");
 
 const OBJ_ID_RE = /^obj:-?\d+:-?\d+:\d+$/;
 
+// Server-authoritative research values for the deeper scales (mirror of
+// frontend world/worldScales.js STAR_CLASSES / PLANET_CLASSES).
+const STAR_CATALOG = {
+  O: { research: 40, rarity: "exceptional" }, B: { research: 26, rarity: "rare" },
+  A: { research: 16, rarity: "uncommon" }, F: { research: 12, rarity: "uncommon" },
+  G: { research: 10, rarity: "common" }, K: { research: 8, rarity: "common" }, M: { research: 6, rarity: "common" },
+};
+const PLANET_CATALOG = {
+  terran: { research: 20, rarity: "rare" }, ocean: { research: 14, rarity: "uncommon" },
+  desert: { research: 8, rarity: "common" }, rocky: { research: 6, rarity: "common" },
+  barren: { research: 5, rarity: "common" }, ice: { research: 7, rarity: "common" },
+  gas: { research: 12, rarity: "uncommon" }, lava: { research: 11, rarity: "uncommon" },
+};
+
 const finiteXY = (loc) =>
   loc && typeof loc === "object" &&
   Number.isFinite(loc.x) && Number.isFinite(loc.y);
@@ -65,6 +79,18 @@ function prepareDiscoveries(universe, rawList) {
           researchValue: info.research,
         };
       }
+    } else if (raw.category === "star" && STAR_CATALOG[raw.objectClass]) {
+      const info = STAR_CATALOG[raw.objectClass];
+      doc = {
+        id: raw.id, name: sanitizeName(raw.name, raw.objectClass), category: "star",
+        objectClass: raw.objectClass, rarity: info.rarity, researchValue: info.research,
+      };
+    } else if (raw.category === "planet" && PLANET_CATALOG[raw.objectClass]) {
+      const info = PLANET_CATALOG[raw.objectClass];
+      doc = {
+        id: raw.id, name: sanitizeName(raw.name, raw.objectClass), category: "planet",
+        objectClass: raw.objectClass, rarity: info.rarity, researchValue: info.research,
+      };
     }
 
     if (!doc) {

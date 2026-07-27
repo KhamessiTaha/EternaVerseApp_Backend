@@ -57,3 +57,20 @@ test("name is sanitized: non-strings and long names fall back", () => {
   const { accepted } = prepareDiscoveries(uni(), [rawObj({ name: "x".repeat(99) })]);
   assert.ok(accepted[0].name.length <= 32);
 });
+
+test("accepts star and planet scans with server-computed research (Cosmic Scales)", () => {
+  const star = { id: "s:2:-1:3", name: "HD 4821", category: "star", objectClass: "M", location: { x: 100, y: 200 } };
+  const planet = { id: "p:sys:2", name: "HD 4821 c", category: "planet", objectClass: "terran", location: { x: 300, y: 50 } };
+  const { accepted, rejected } = prepareDiscoveries(uni(), [star, planet]);
+  assert.equal(rejected.length, 0);
+  assert.equal(accepted.length, 2);
+  assert.equal(accepted.find((d) => d.category === "star").researchValue, 6);   // M dwarf
+  assert.equal(accepted.find((d) => d.category === "planet").researchValue, 20); // terran
+});
+
+test("rejects an unknown star/planet class", () => {
+  const bogus = { id: "s:0:0:0", name: "x", category: "star", objectClass: "ZZ", location: { x: 0, y: 0 } };
+  const { accepted, rejected } = prepareDiscoveries(uni(), [bogus]);
+  assert.equal(accepted.length, 0);
+  assert.equal(rejected.length, 1);
+});
