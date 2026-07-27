@@ -188,6 +188,44 @@ function applyContact(universe, civId, action, rand = Math.random) {
     };
   }
 
+  if (action === "champion") {
+    // Commit to shepherding this species up the ladder. Replaces any previous
+    // choice. Costs nothing but your attention - and the story that follows.
+    universe.chosenCivId = civId;
+    shiftRelationship(civ, 0.1);
+    return {
+      ok: true,
+      action,
+      outcome: "championed",
+      civ,
+      message: `You have chosen ${name} as your people. Their story is now yours to shape - from first fire to the stars, if they can reach them.`
+    };
+  }
+
+  if (action === "rescue") {
+    // The in-person rescue: only meaningful for a dying civ, and only reachable
+    // by descending to their world (their beacon renders solely at their
+    // scale). Free - the reward IS the effort of coming down - and it earns a
+    // bond nothing bought with research ever could.
+    const dying = (civ.resourceDepletion ?? 0) > 0.7 || (civ.stability ?? 0.5) < 0.28
+      || (civ.petition && civ.petition.kind === "crisis");
+    if (!dying) return { ok: false, reason: "They are not in crisis" };
+
+    civ.resourceDepletion = clamp((civ.resourceDepletion ?? 0) - 0.6, 0, 1);
+    civ.stability = clamp((civ.stability ?? 0.5) + 0.35, 0, 1);
+    civ.population = Math.max(1e5, Math.floor((civ.population || 1e6) * 1.08));
+    civ.petition = null; // their plea is answered, in person
+    shiftRelationship(civ, 0.42);
+    return {
+      ok: true,
+      action,
+      outcome: "rescued",
+      cost: 0,
+      civ,
+      message: `You reached ${name} in its dying hour and stayed the collapse. They will worship the memory of the day you came down.`
+    };
+  }
+
   if (action === "pacify") {
     if ((civ.pacifies || 0) >= MAX_USES) {
       return { ok: false, reason: "Their culture has absorbed all it can" };

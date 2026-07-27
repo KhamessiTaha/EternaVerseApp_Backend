@@ -425,6 +425,21 @@ class PhysicsEngine {
    * step (~30s wall-clock), tuned so an active universe produces a few of
    * these per real-world hour, not a spam feed.
    */
+  // Amplified milestone events when the player's CHOSEN species crosses a tier
+  // - the heartbeat of the long arc.
+  _chosenMilestone(civ, newType) {
+    if (civ.id !== this.universe.chosenCivId) return;
+    const name = civDesignation(civ.id);
+    const lines = {
+      Type1: `Your chosen people, ${name}, have reached the stars — no longer bound to a single world. You met them as primitives; look at them now.`,
+      Type2: `Your chosen people, ${name}, now drink the full light of their star. A Type II civilization, and you shepherded them here.`,
+      Type3: `Your chosen people, ${name}, command the energy of an entire galaxy. You raised a species from first fire to the heavens. This is your legacy.`,
+    };
+    this._recordSignificantEvent("chosen", lines[newType] || `${name} advances.`, {
+      civilizationId: civ.id, chosen: true, newType,
+    });
+  }
+
   _maybeCivilizationEvent(civ) {
     const name = civDesignation(civ.id);
     const attitude = civAttitude(civ);
@@ -561,12 +576,14 @@ class PhysicsEngine {
           ascension: "stellar",
           description: `${civDesignation(civ.id)} has left its cradle world — no longer bound to one planet, it now holds its star system.`
         });
+        this._chosenMilestone(civ, "Type1");
       } else if (civ.technology > 50 && civ.type === "Type1" && this._rand() < 0.0012) {
         civ.type = "Type2";
         this._recordSignificantEvent("civilization", "Type II Civilization Achieved", {
           civilizationId: civ.id,
           description: "A civilization has achieved stellar energy mastery"
         });
+        this._chosenMilestone(civ, "Type2");
       } else if (civ.technology > 80 && civ.type === "Type2" && this._rand() < 0.0004) {
         civ.type = "Type3";
         // A scale ascension: stellar -> galactic. They now span, and are
@@ -576,9 +593,10 @@ class PhysicsEngine {
           ascension: "galactic",
           description: `${civDesignation(civ.id)} has risen to command the energy of its entire galaxy — a power now met among the galaxies themselves.`
         });
-        
+        this._chosenMilestone(civ, "Type3");
+
         if (!this.milestones.transcendence) {
-          this._recordMilestone('transcendence', "Transcendence", 
+          this._recordMilestone('transcendence', "Transcendence",
             "A civilization has transcended to Type III status");
         }
       }
@@ -618,7 +636,16 @@ class PhysicsEngine {
           technology: civ.technology,
           cause: extinctionType
         });
-        
+
+        // Losing your chosen species is the arc's tragedy - mark it, and free
+        // the mantle so another can be taken up.
+        if (civ.id === this.universe.chosenCivId) {
+          this._recordSignificantEvent("chosen", `Your chosen people, ${civDesignation(civ.id)}, are gone — lost to ${extinctionType.toLowerCase()}. The story you were writing ends here. You may choose another.`, {
+            civilizationId: civ.id, chosen: true, fallen: true,
+          });
+          this.universe.chosenCivId = null;
+        }
+
         console.log(`💀 Civilization extinct: ${civ.type} (${extinctionType}) after ${(civ.age / 1e6).toFixed(1)}M years`);
       }
     }

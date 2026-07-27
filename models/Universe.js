@@ -228,6 +228,9 @@ const UniverseSchema = new Schema({
   // Monotonic simulation-step counter, persisted so time-bounded mechanics
   // (civ petition deadlines) survive across separate advance/sweep calls.
   simStep: { type: Number, default: 0 },
+  // The player's "chosen species" - the civ they've committed to shepherding up
+  // the Kardashev ladder. Their rise/fall drives the game's long arc.
+  chosenCivId: { type: String, default: null },
   civilizations: { type: [CivilisationSchema], default: [] },
   significantEvents: { type: [SignificantEventSchema], default: [] },
   milestones: { type: MilestonesSchema, default: () => ({}) },
