@@ -440,6 +440,68 @@ class PhysicsEngine {
     });
   }
 
+  // The culmination of the Chosen-Species arc. Called when a Type III transition
+  // happens; only fires for the player's chosen, un-ascended people. Records an
+  // immortal legacy, marks the civ ascended (so it becomes a benefactor rather
+  // than a subject), and frees chosenCivId so the player may champion anew -
+  // making the Legacy screen's "their story continues" literally true.
+  _recordLegacy(civ) {
+    if (civ.id !== this.universe.chosenCivId || civ.ascended) return;
+    civ.ascended = true;
+
+    if (!Array.isArray(this.universe.legacies)) this.universe.legacies = [];
+    this.universe.legacies.push({
+      civId: civ.id,
+      designation: civDesignation(civ.id),
+      ascendedAt: new Date(),
+      ageGyr: (this.universe.currentState.age / 1e9).toFixed(2),
+      uplifts: civ.uplifts || 0,
+      rescues: civ.rescues || 0,
+      pacifies: civ.pacifies || 0,
+      shepherdedFor: civ.age || 0,
+    });
+
+    // The mantle is freed. The tragedy path clears it the same way on
+    // extinction; here it is cleared in triumph.
+    this.universe.chosenCivId = null;
+  }
+
+  // The shepherd's dividend: an ascended people remember who raised them. Each
+  // step there is a small chance they send knowledge back to their god (RP) or,
+  // rarer, reach down to steady a civilization in crisis - the ascended arc's
+  // mechanical tail, so a completed legacy keeps paying forward.
+  _ascendantDividend(civ) {
+    if (!civ.ascended || civ.extinct) return;
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+    if (this._rand() < 0.03) {
+      const gift = 3 + Math.floor(this._rand() * 6);
+      if (!this.universe.research) this.universe.research = {};
+      this.universe.research.points = (this.universe.research.points || 0) + gift;
+      this.universe.research.totalEarned = (this.universe.research.totalEarned || 0) + gift;
+      this._recordSignificantEvent("civilization",
+        `The ascended of ${civDesignation(civ.id)} send knowledge back to their old shepherd (+${gift} RP)`,
+        { civilizationId: civ.id, dividend: gift });
+      return;
+    }
+
+    // Rarer: the ascended intervene to save a failing neighbor - a Type III
+    // reaching down, the way you once reached down for them.
+    if (this._rand() < 0.01) {
+      const failing = (this.universe.civilizations || []).find(
+        (c) => !c.extinct && !c.ascended && c.id !== civ.id
+          && ((c.resourceDepletion ?? 0) > 0.7 || (c.stability ?? 0.5) < 0.3)
+      );
+      if (failing) {
+        failing.resourceDepletion = clamp((failing.resourceDepletion ?? 0) - 0.35, 0, 1);
+        failing.stability = clamp((failing.stability ?? 0.5) + 0.2, 0, 1);
+        this._recordSignificantEvent("civilization",
+          `The ascended of ${civDesignation(civ.id)} descend to steady ${civDesignation(failing.id)} in its crisis — passing on the mercy once shown to them.`,
+          { civilizationId: civ.id });
+      }
+    }
+  }
+
   _maybeCivilizationEvent(civ) {
     const name = civDesignation(civ.id);
     const attitude = civAttitude(civ);
@@ -594,6 +656,10 @@ class PhysicsEngine {
           description: `${civDesignation(civ.id)} has risen to command the energy of its entire galaxy — a power now met among the galaxies themselves.`
         });
         this._chosenMilestone(civ, "Type3");
+        // If this was the player's chosen people, their arc completes: they
+        // ascend into a permanent benefactor and the mantle is freed for
+        // another. Must run AFTER _chosenMilestone (which reads chosenCivId).
+        this._recordLegacy(civ);
 
         if (!this.milestones.transcendence) {
           this._recordMilestone('transcendence', "Transcendence",
@@ -615,6 +681,9 @@ class PhysicsEngine {
       // Civilization drama: rare per-step events that make civs feel alive
       // (civil wars, cults of the player, exploding rockets...)
       this._maybeCivilizationEvent(civ);
+
+      // Ascended benefactors pay their legacy forward (RP gifts, crisis aid).
+      if (civ.ascended) this._ascendantDividend(civ);
       
       // EXTINCTION EVENTS
       const extinctionChance = this._calculateExtinctionRisk(civ, cs);

@@ -96,6 +96,10 @@ const CivilisationSchema = new Schema({
   // How this civ feels about the player (-1 hostile .. +1 devoted), shifted
   // by contact actions and events; drives attitude (worship/hostile/...)
   relationship: { type: Number, default: 0, min: -1, max: 1 },
+  // A chosen species that reached Type III ascends: it becomes a permanent
+  // benefactor (the "shepherd's dividend") and frees the player to champion
+  // another. The legacy itself is recorded on universe.legacies.
+  ascended: { type: Boolean, default: false },
   // Disposition assigned from innate stats; flavors the petitions it raises
   // (militant / devout / scholarly / mercantile / insular).
   personality: { type: String, default: null },
@@ -179,6 +183,20 @@ const MetricsSchema = new Schema({
   cosmicHealth: { type: Number, default: 1.0 }
 }, { _id: false });
 
+// A completed Chosen-Species arc: the immortal record of a people the player
+// shepherded from first fire to Type III. Accumulates across a universe's life
+// so championing is repeatable and cumulative, not a one-shot ending.
+const LegacySchema = new Schema({
+  civId: { type: String, required: true },
+  designation: { type: String },
+  ascendedAt: { type: Date, default: Date.now },
+  ageGyr: { type: String },
+  uplifts: { type: Number, default: 0 },
+  rescues: { type: Number, default: 0 },
+  pacifies: { type: Number, default: 0 },
+  shepherdedFor: { type: Number, default: 0 } // civ age at ascension (years)
+}, { _id: false });
+
 const UniverseSchema = new Schema({
   userId: { 
     type: mongoose.Schema.Types.ObjectId, 
@@ -232,6 +250,7 @@ const UniverseSchema = new Schema({
   // The player's "chosen species" - the civ they've committed to shepherding up
   // the Kardashev ladder. Their rise/fall drives the game's long arc.
   chosenCivId: { type: String, default: null },
+  legacies: { type: [LegacySchema], default: [] },
   civilizations: { type: [CivilisationSchema], default: [] },
   significantEvents: { type: [SignificantEventSchema], default: [] },
   milestones: { type: MilestonesSchema, default: () => ({}) },
