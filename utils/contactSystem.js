@@ -215,6 +215,7 @@ function applyContact(universe, civId, action, rand = Math.random) {
     civ.stability = clamp((civ.stability ?? 0.5) + 0.35, 0, 1);
     civ.population = Math.max(1e5, Math.floor((civ.population || 1e6) * 1.08));
     civ.petition = null; // their plea is answered, in person
+    civ.rescues = (civ.rescues || 0) + 1;
     shiftRelationship(civ, 0.42);
     return {
       ok: true,
