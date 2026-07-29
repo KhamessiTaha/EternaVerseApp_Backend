@@ -91,16 +91,24 @@ router.post("/", async (req, res) => {
       }
     });
 
+    // Hybrid Genesis (Coherent Cosmos): a new universe begins ~1.2 Gyr after
+    // the Big Bang - the galaxy-formation era - rather than an empty dark-ages
+    // void. This makes the very first frame coherent with the render (which is
+    // now driven by these numbers) and always explorable: proto-galaxies are
+    // condensing and the first stars are alight, with counts the physics engine
+    // then grows forward from. Metallicity is authentically low this early.
     uni.currentState = {
-      age: 0,
+      age: 1.2e9,
       _scaleFactor: 1.0,
       expansionRate: universeConstants.H0_km_s_Mpc,
       temperature: initialConditions?.initialTemperature ?? 2.725,
       entropy: 0,
       stabilityIndex: 1.0,
-      galaxyCount: 0,
-      starCount: 0,
-      blackHoleCount: 0,
+      cosmicPhase: "galaxy_formation",
+      galaxyCount: 1.0e6,
+      starCount: 1.0e10,
+      blackHoleCount: 5.0e3,
+      metallicity: 0.04,
       habitableSystemsCount: 0,
       lifeBearingPlanetsCount: 0,
       civilizationCount: 0
