@@ -9,6 +9,7 @@ const Universe = require("../models/Universe");
 const { recordEvent } = require("../utils/eventLog");
 const { prepareDiscoveries } = require("../utils/discoveryValidator");
 const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgradeCatalog");
+const { doctrineModifiers, isValidDoctrine } = require("../utils/doctrineCatalog");
 const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils/simulationRunner");
 const { difficultyStability } = require("../utils/stabilityConfig");
 const { applyContact, civDesignation } = require("../utils/contactSystem");
@@ -310,6 +311,74 @@ router.post("/:id/simulate", async (req, res) => {
   }
 });
 
+// Vessel lost: the death penalty (the game's fail state). Losing your ship is
+// no longer free - the universe DRIFTS while you recover: a direct stability
+// hit plus a forced time-skip that runs real physics (civs age, anomalies may
+// spawn, the reservoir drains). Death now means losing ground in the collapse
+// you're fighting, and enough deaths in a crisis can tip the universe over.
+const DEATH_PENALTY = {
+  Beginner:     { stability: 0.04, steps: 1 },
+  Intermediate: { stability: 0.06, steps: 2 },
+  Advanced:     { stability: 0.09, steps: 3 },
+};
+
+router.post("/:id/vessel-lost", async (req, res) => {
+  try {
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+    if (uni.status === "ended") {
+      return res.status(400).json({ ok: false, error: "Universe already ended" });
+    }
+
+    const difficulty = uni.difficulty || "Intermediate";
+    const pen = DEATH_PENALTY[difficulty] || DEATH_PENALTY.Intermediate;
+
+    if (!uni.currentState) uni.currentState = {};
+    const before = uni.currentState.stabilityIndex ?? 1;
+    // Direct hit first, so the forced steps run from the weakened state and can
+    // actually push a fragile universe past collapse.
+    uni.currentState.stabilityIndex = Math.max(0, before - pen.stability);
+    // Erode the recovery reservoir's ceiling too, so it can't instantly heal
+    // the wound back (mirrors how sustained damage caps regen).
+    if (typeof uni.currentState.stabilityCeiling === "number") {
+      uni.currentState.stabilityCeiling = Math.max(0, uni.currentState.stabilityCeiling - pen.stability);
+    }
+
+    const ageBefore = uni.currentState.age || 0;
+    const now = new Date();
+    const result = advanceUniverse(uni, now, { forceSteps: pen.steps });
+    const yearsSkipped = (uni.currentState.age || 0) - ageBefore;
+    const stabilityDelta = (uni.currentState.stabilityIndex ?? 0) - before;
+
+    uni.metrics = uni.metrics || {};
+    uni.metrics.deaths = (uni.metrics.deaths || 0) + 1;
+    uni.markModified("metrics");
+
+    recordEvent(uni, {
+      type: "milestone",
+      description: `Vessel lost. The universe drifted ${(yearsSkipped / 1e6).toFixed(0)} Myr while you recovered — stability ${(stabilityDelta * 100).toFixed(1)}%.`,
+      effects: { death: true, stabilityDelta, yearsSkipped },
+    });
+
+    await uni.save();
+
+    return res.json({
+      ok: true,
+      universe: uni,
+      penalty: {
+        stabilityDelta,
+        yearsSkipped,
+        deaths: uni.metrics.deaths,
+        hasEnded: uni.status === "ended",
+        endReason: uni.endReason,
+      },
+    });
+  } catch (err) {
+    console.error("Vessel-lost error:", err);
+    return res.status(500).json({ ok: false, error: err.message || "Death penalty error" });
+  }
+});
+
 // Delete a universe
 router.delete("/:id", async (req, res) => {
   try {
@@ -353,7 +422,11 @@ router.post("/:id/resolve-anomaly", async (req, res) => {
     // scales the reward; resolveAnomaly() clamps/validates it internally.
     // The Containment Rig upgrade adds a server-side reward bonus computed
     // from the universe's persisted upgrade level, never from client input.
-    const containmentMultiplier = 1 + (uni.upgrades?.containment || 0) * CONTAINMENT_BONUS_PER_LEVEL;
+    // The chosen doctrine (build identity) scales it further - a Warden is
+    // rewarded for containment, a Surveyor/Voidrunner is penalized.
+    const containmentMultiplier =
+      (1 + (uni.upgrades?.containment || 0) * CONTAINMENT_BONUS_PER_LEVEL) *
+      doctrineModifiers(uni.doctrine).containment;
     const result = AnomalyGen.resolveAnomaly(anomalyId, accuracy, containmentMultiplier);
 
     if (!result.success) {
@@ -753,6 +826,40 @@ router.post("/:id/upgrade", async (req, res) => {
   } catch (err) {
     console.error("Upgrade error:", err);
     return res.status(500).json({ ok: false, error: "Failed to purchase upgrade" });
+  }
+});
+
+// Commit to (or clear) a doctrine - the build-identity layer. Respec-friendly:
+// switching is free, because the identity lives in the tradeoff you're playing
+// with, not in punishing lock-in. Server-authoritative so its reward effects
+// (containment) can't be spoofed.
+router.post("/:id/doctrine", async (req, res) => {
+  try {
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+    if (uni.status === "ended") {
+      return res.status(400).json({ ok: false, error: "Cannot re-doctrine a ship in an ended universe" });
+    }
+
+    let { doctrine } = req.body;
+    if (doctrine === "none") doctrine = null;
+    if (!isValidDoctrine(doctrine)) {
+      return res.status(400).json({ ok: false, error: "Unknown doctrine" });
+    }
+
+    uni.doctrine = doctrine;
+    recordEvent(uni, {
+      type: "upgrade",
+      description: doctrine ? `Adopted the ${doctrine} doctrine` : "Reverted to a stock configuration",
+      effects: { doctrine },
+    });
+    uni.lastModified = new Date();
+    await uni.save();
+
+    return res.json({ ok: true, doctrine: uni.doctrine });
+  } catch (err) {
+    console.error("Doctrine error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to set doctrine" });
   }
 });
 

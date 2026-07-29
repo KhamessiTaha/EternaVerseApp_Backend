@@ -173,6 +173,7 @@ const CurrentStateSchema = new Schema({
 
 const MetricsSchema = new Schema({
   playerInterventions: { type: Number, default: 0 },
+  deaths: { type: Number, default: 0 },
   anomalyResolutionRate: { type: Number, default: 0 },
   anomaliesResolved: { type: Number, default: 0 },
   warsBrokered: { type: Number, default: 0 },
@@ -250,6 +251,8 @@ const UniverseSchema = new Schema({
   // The player's "chosen species" - the civ they've committed to shepherding up
   // the Kardashev ladder. Their rise/fall drives the game's long arc.
   chosenCivId: { type: String, default: null },
+  // Build-identity doctrine (utils/doctrineCatalog.js); null = stock, no bias.
+  doctrine: { type: String, default: null },
   legacies: { type: [LegacySchema], default: [] },
   civilizations: { type: [CivilisationSchema], default: [] },
   significantEvents: { type: [SignificantEventSchema], default: [] },

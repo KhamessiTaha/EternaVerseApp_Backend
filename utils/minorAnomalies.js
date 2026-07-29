@@ -9,6 +9,8 @@
 // all rewards. In-fiction: MINOR anomalies (ambient, small-but-real
 // rewards) vs CRITICAL anomalies (physics-engine events, big effects).
 
+const { doctrineModifiers } = require("./doctrineCatalog");
+
 const MINOR_ID_PATTERN = /^-?\d+:-?\d+:\d+$/;
 const MAX_RESOLVED_STORED = 2000; // FIFO cap on the dedup history
 
@@ -35,7 +37,9 @@ function applyMinorResolution(universe, { anomalyId, severity, accuracy }, conta
   const sev = clamp(Math.floor(Number(severity) || 1), 1, 3);
   const acc = clamp(Number(accuracy) || 70, 0, 100);
   const perf = performanceMultiplier(acc);
-  const containment = 1 + (universe.upgrades?.containment || 0) * containmentBonusPerLevel;
+  const containment =
+    (1 + (universe.upgrades?.containment || 0) * containmentBonusPerLevel) *
+    doctrineModifiers(universe.doctrine).containment;
 
   // Deliberately ~40% of a critical anomaly's impact - ambient work, real
   // but never a substitute for hunting the big ones
