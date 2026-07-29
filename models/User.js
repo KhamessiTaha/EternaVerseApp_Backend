@@ -7,6 +7,10 @@ const userSchema = new mongoose.Schema({
   // Dev/test privileges. Deliberately NOT settable through any API route -
   // the only way to grant it is editing the document directly in MongoDB.
   isAdmin: { type: Boolean, default: false },
+  // Anonymous demo account (POST /auth/guest). Full-featured while active;
+  // POST /auth/claim upgrades it in place to a real account (same _id, so the
+  // guest's universes are simply kept - no reassignment).
+  isGuest: { type: Boolean, default: false },
   // Account-wide achievements, unlocked by evaluating a universe's state
   // (see utils/achievements.js) - persist across all of a player's universes.
   achievements: {
