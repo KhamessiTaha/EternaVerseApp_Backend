@@ -513,7 +513,12 @@ router.post("/:id/discoveries", async (req, res) => {
         uni.discoveries.splice(0, uni.discoveries.length - MAX_DISCOVERIES_STORED);
       }
 
-      const earned = accepted.reduce((sum, d) => sum + d.researchValue, 0);
+      // Survey-streak bonus: the client reports its scan-chain multiplier; the
+      // server clamps it to the legitimate ceiling (+60%) so a tampered payload
+      // can never do better than a perfect streak would.
+      const streakMult = Math.min(1.6, Math.max(1, ...raw.map((r) => Number(r?.surveyMult) || 1)));
+      const base = accepted.reduce((sum, d) => sum + d.researchValue, 0);
+      const earned = Math.round(base * streakMult);
       if (!uni.research) uni.research = {};
       uni.research.points = (uni.research.points || 0) + earned;
       uni.research.totalEarned = (uni.research.totalEarned || 0) + earned;
