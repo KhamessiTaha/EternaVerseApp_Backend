@@ -8,6 +8,7 @@ const MLPredictor = require("../utils/mlPredictor");
 const Universe = require("../models/Universe");
 const { recordEvent } = require("../utils/eventLog");
 const { prepareDiscoveries } = require("../utils/discoveryValidator");
+const { applyWarStrike } = require("../utils/warStrike");
 const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgradeCatalog");
 const { doctrineModifiers, isValidDoctrine } = require("../utils/doctrineCatalog");
 const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils/simulationRunner");
@@ -865,6 +866,48 @@ router.post("/:id/doctrine", async (req, res) => {
   } catch (err) {
     console.error("Doctrine error:", err);
     return res.status(500).json({ ok: false, error: "Failed to set doctrine" });
+  }
+});
+
+// Report destroyed civilization vessels. The client renders the dogfight; the
+// server owns every lasting consequence (regard, militarization, war score).
+// Kill counts are clamped and the war is verified server-side, so a tampered
+// client can shift a war by at most one clamped strike per request.
+router.post("/:id/war-strike", async (req, res) => {
+  try {
+    const { civId, kills, defendingCivId } = req.body;
+    if (!civId) return res.status(400).json({ ok: false, error: "civId required" });
+
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    if (uni.status === "ended") {
+      return res.status(400).json({ ok: false, error: "Universe has ended" });
+    }
+
+    const result = applyWarStrike(uni, civId, kills, { defendingCivId });
+    if (!result.ok) return res.status(400).json({ ok: false, error: result.reason });
+
+    recordEvent(uni, {
+      type: result.brokeSiege ? "war" : "civilization",
+      description: result.message,
+      effects: result.effects,
+    });
+
+    uni.markModified("civilizations");
+    uni.markModified("activeWars");
+    uni.lastModified = new Date();
+    await uni.save();
+
+    return res.json({
+      ok: true,
+      message: result.message,
+      brokeSiege: result.brokeSiege,
+      universe: uni,
+    });
+  } catch (err) {
+    console.error("War strike error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to record strike" });
   }
 });
 
