@@ -2,6 +2,7 @@ const seedrandom = require("seedrandom");
 const { recordEvent } = require("./eventLog");
 const { civDesignation, civAttitude } = require("./contactSystem");
 const STAB = require("./stabilityConfig");
+const COSMO = require("./cosmologyConfig");
 const { tickWars } = require("./warSystem");
 
 /**
@@ -164,8 +165,13 @@ class PhysicsEngine {
     const volumeRatio = Math.pow(cs._scaleFactor, 3);
     const entropyGrowth = Math.log(Math.max(1, volumeRatio)) * 1e5 * (dt / 1e8);
     cs.entropy = this._clamp(cs.entropy + entropyGrowth, 0, 1e16);
-    
-    const energyDecay = 5e-13 * dt;
+
+    // Free energy declines as gas is consumed and stars burn out, accelerating
+    // with age. (Was 5e-13*dt = 1e-5/step, which needed 100,000 steps to empty
+    // and left energyBudget frozen at ~100% - taking the heat-death and
+    // stellar-death end conditions off the table with it.)
+    const ageGyrNow = cs.age / 1e9;
+    const energyDecay = COSMO.ENERGY_DECAY * (dt / COSMO.REFERENCE_DT) * (1 + ageGyrNow / 20);
     cs.energyBudget = this._clamp(cs.energyBudget - energyDecay, 0, 1.0);
     
     this._updateCosmicPhase();
@@ -193,7 +199,11 @@ class PhysicsEngine {
     // Galaxy formation
     const K = this.constants.observableGalaxies;
     const formationPeak = Math.exp(-Math.pow((ageGyr - 5) / 3, 2));
-    const baseRate = 0.15 / 1e9;
+    // Tuned so galaxies actually approach the observable count during the
+    // formation era. The old rate needed ~1000+ steps to get there, which left
+    // galaxyCount at ~1e-7 of target forever - zeroing the anomaly spawn rate
+    // (which divided by it) and pinning stability's structure term at ~0.
+    const baseRate = COSMO.GALAXY_BASE_RATE;
     const r = baseRate * (1 + formationPeak * 2);
     const current = cs.galaxyCount;
     
@@ -244,10 +254,21 @@ class PhysicsEngine {
       const stellarDeathRate = cs.starCount * 1e-11 * dt;
       const generationIncrease = stellarDeathRate / (starsPerGalaxy * 10);
       cs.stellarGenerations = Math.min(cs.stellarGenerations + generationIncrease, 10);
-      
-      const metalProduction = stellarDeathRate * 1e-14;
-      cs.metallicity = this._clamp(cs.metallicity + metalProduction, 0, 1);
-      
+
+      // Enrichment SATURATES (logistic): each stellar generation adds less as
+      // the gas reservoir depletes. metallicity is a fraction of SOLAR
+      // metallicity, so 100% means "as metal-rich as the Sun" - not "the
+      // universe is pure metal". The old version was an unbounded accumulator
+      // proportional to starCount, clamped at 1, so it read 100% within a few
+      // Gyr and never moved again.
+      const gasLeft = Math.exp(-ageGyr / 10);
+      const enrichRate = COSMO.ENRICHMENT_RATE * (dt / COSMO.REFERENCE_DT) * gasLeft;
+      cs.metallicity = this._clamp(
+        cs.metallicity + enrichRate * (1 - cs.metallicity),
+        0,
+        1
+      );
+
       if (cs.metallicity > 0.1 && !this.milestones.stellarPopulationI) {
         this._recordMilestone('stellarPopulationI', "Population I Stars", 
           "Metal-rich stars capable of forming rocky planets");
@@ -328,28 +349,26 @@ class PhysicsEngine {
   _manageCivilizations(ageGyr, dt) {
     const cs = this.universe.currentState;
     
-    if (ageGyr < 5 || cs.lifeBearingPlanetsCount < 1000) return;
+    if (ageGyr < COSMO.CIV_START_GYR || cs.lifeBearingPlanetsCount < 1000) return;
 
-    // 1. CALCULATE EXPECTED CIVILIZATIONS (not actual spawning).
-    // Was 1e-7: one civilization per TEN MILLION life-bearing planets -
-    // natural civs effectively never emerged (every civ in the game came
-    // from the dev console). Now one per ~10k, so the life era actually
-    // produces societies on its own.
-    const civProb = 1e-4 * (1 + cs.metallicity * 0.5);
-    const expectedCivs = Math.floor(cs.lifeBearingPlanetsCount * civProb);
-    
+    // 1. EXPECTED CIVILIZATIONS - a bounded SCHEDULE, not a fraction of an
+    // exponentially-growing life count. The old formula (lifeBearing x 1e-4)
+    // blew past the population cap almost immediately and, with 10 spawns per
+    // step, made ~500 civilizations appear all at once.
+    const expectedCivs = Math.floor((ageGyr - COSMO.CIV_START_GYR) * COSMO.CIVS_PER_GYR);
+
     // 2. ENFORCE HARD CAP
     const activeCivs = this.universe.civilizations.filter(c => !c.extinct).length;
     const maxCivs = this.options.maxCivilizations;
-    
+
     // 3. SPAWN NEW CIVILIZATIONS (only if under cap and needed)
     if (expectedCivs > cs.civilizationCount && activeCivs < maxCivs) {
       const needToAdd = Math.min(
         expectedCivs - cs.civilizationCount,
         maxCivs - activeCivs,
-        10 // Max 10 per step to prevent spam
+        COSMO.MAX_CIV_SPAWNS_PER_STEP
       );
-      
+
       if (needToAdd > 0) {
         this._spawnCivilizations(needToAdd, ageGyr);
         cs.civilizationCount += needToAdd;
@@ -431,8 +450,8 @@ class PhysicsEngine {
     if (civ.id !== this.universe.chosenCivId) return;
     const name = civDesignation(civ.id);
     const lines = {
-      Type1: `Your chosen people, ${name}, have reached the stars — no longer bound to a single world. You met them as primitives; look at them now.`,
-      Type2: `Your chosen people, ${name}, now drink the full light of their star. A Type II civilization, and you shepherded them here.`,
+      Type1: `Your chosen people, ${name}, now command every joule their world can give. A planetary civilization — and already looking up. You met them as primitives; look at them now.`,
+      Type2: `Your chosen people, ${name}, have left their cradle world and drink the full light of their star. A Type II civilization, and you shepherded them here.`,
       Type3: `Your chosen people, ${name}, command the energy of an entire galaxy. You raised a species from first fire to the heavens. This is your legacy.`,
     };
     this._recordSignificantEvent("chosen", lines[newType] || `${name} advances.`, {
@@ -592,11 +611,13 @@ class PhysicsEngine {
       
       civ.age += dt;
 
-      // Technology advancement. Was 0.01 (~0.003/step): a civ's tech was
-      // effectively frozen within any session and Type thresholds took
-      // days of continuous simulation. Now ~0.02-0.06/step: visibly moves
-      // every catch-up batch, thresholds reachable through the sweep.
-      const techGrowth = 0.08 * (dt / 1e8) * (1 + (civ.developmentLevel ?? 0));
+      // Technology advancement, calibrated to the Ascension budget: ~0.46/step
+      // takes a civ 0 -> 100 in ~215 steps, so one born around step 130 can
+      // reach Type III inside a ~400-step universe. (Previously ~0.024/step:
+      // the full climb needed tens of thousands of steps - the game's main
+      // goal was mathematically unreachable.)
+      const techGrowth =
+        COSMO.TECH_PER_STEP * (dt / COSMO.REFERENCE_DT) * (0.6 + (civ.developmentLevel ?? 0));
       civ.technology = Math.min(100, (civ.technology ?? 0) + techGrowth);
 
       // Resource depletion: consumption scales with how advanced and
@@ -625,28 +646,37 @@ class PhysicsEngine {
       // of being fixed at birth forever
       civ.warlikeness = this._clamp((civ.warlikeness ?? 0.5) + this._gaussianRandom(0, 0.003), 0, 1);
 
-      // Type progression. Old odds once tech-qualified: Type I ~8h of
-      // continuous sim, Type II ~3.5 DAYS, Type III ~35 DAYS - transcendence
-      // (and the Vanguard hull) was unreachable in practice. New odds:
-      // ~1.7h / ~7h / ~21h of qualified simulation - rare, but real.
-      if (civ.technology > 20 && civ.type === "Type0" && this._rand() < 0.005) {
+      // Type progression. Gates are calibrated to the Ascension budget:
+      // ~12 / ~20 / ~33 steps of waiting once the tech threshold is met.
+      // (Old odds needed ~200 / ~830 / ~2500 steps on top of a tech climb
+      // that itself took tens of thousands.)
+      //
+      // The Kardashev ladder is an ENERGY ladder, and each rung is a real
+      // change of scale: Type I masters its home planet (still planet-bound),
+      // Type II encloses its star, Type III commands its galaxy. civPlacement
+      // mirrors this exactly, which is what decides where you meet them.
+      if (civ.technology > COSMO.TIER_THRESHOLDS.Type1 && civ.type === "Type0"
+          && this._rand() < COSMO.TIER_CHANCE.Type1) {
         civ.type = "Type1";
-        // A scale ascension: planet-bound -> holding its star system. The
-        // "you met them as primitives, now they've reached the stars" payoff.
-        this._recordSignificantEvent("civilization", "A Civilization Reaches the Stars", {
+        this._recordSignificantEvent("civilization", "A Civilization Masters Its World", {
           civilizationId: civ.id,
-          ascension: "stellar",
-          description: `${civDesignation(civ.id)} has left its cradle world — no longer bound to one planet, it now holds its star system.`
+          ascension: "planetary",
+          description: `${civDesignation(civ.id)} now harnesses the full energy of its homeworld — a true planetary civilization, and hungry for more.`
         });
         this._chosenMilestone(civ, "Type1");
-      } else if (civ.technology > 50 && civ.type === "Type1" && this._rand() < 0.0012) {
+      } else if (civ.technology > COSMO.TIER_THRESHOLDS.Type2 && civ.type === "Type1"
+          && this._rand() < COSMO.TIER_CHANCE.Type2) {
         civ.type = "Type2";
-        this._recordSignificantEvent("civilization", "Type II Civilization Achieved", {
+        // A scale ascension: planet-bound -> enclosing its star. This is the
+        // rung where they leave the cradle world for good.
+        this._recordSignificantEvent("civilization", "A Civilization Encloses Its Star", {
           civilizationId: civ.id,
-          description: "A civilization has achieved stellar energy mastery"
+          ascension: "stellar",
+          description: `${civDesignation(civ.id)} has left its cradle world and drinks the full light of its star — a Type II power, met now among the stars themselves.`
         });
         this._chosenMilestone(civ, "Type2");
-      } else if (civ.technology > 80 && civ.type === "Type2" && this._rand() < 0.0004) {
+      } else if (civ.technology > COSMO.TIER_THRESHOLDS.Type3 && civ.type === "Type2"
+          && this._rand() < COSMO.TIER_CHANCE.Type3) {
         civ.type = "Type3";
         // A scale ascension: stellar -> galactic. They now span, and are
         // encountered at, the intergalactic scale.
@@ -1001,7 +1031,10 @@ class PhysicsEngine {
 
   _calculateEntropyFactor() {
     const cs = this.universe.currentState;
-    const maxEntropy = 3e14;
+    // Reference aligned to what entropy ACTUALLY reaches over a universe's
+    // life (~1e7-1e8). The old 3e14 was ~7 orders of magnitude too high, so
+    // this term sat at 1.0 forever and contributed nothing to stability.
+    const maxEntropy = COSMO.ENTROPY_REFERENCE;
     return Math.max(0, 1 - Math.pow(cs.entropy / maxEntropy, 0.7));
   }
 

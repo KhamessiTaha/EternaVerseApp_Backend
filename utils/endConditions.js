@@ -2,6 +2,7 @@
  * End Conditions Module
  * Handles all universe ending scenarios
  */
+const COSMO = require("./cosmologyConfig");
 
 class EndConditions {
   constructor(universe, options = {}) {
@@ -78,9 +79,10 @@ class EndConditions {
       return true;
     }
     
-    // Entropy death (maximum disorder)
-    // FIXED: Increased threshold and added energy check
-    if (cs.entropy > 2e15 && cs.energyBudget < 0.02) {
+    // Entropy death (maximum disorder). Threshold aligned to the scale entropy
+    // actually reaches (see cosmologyConfig) - the old 2e15 was ~7 orders of
+    // magnitude beyond anything a universe could accumulate.
+    if (cs.entropy > COSMO.ENTROPY_DEATH && cs.energyBudget < 0.02) {
       this.universe.status = "ended";
       this.universe.endCondition = "maximum-entropy";
       this.universe.endReason = "Maximum entropy reached - no free energy remains";
@@ -126,7 +128,7 @@ class EndConditions {
     }
 
     // Entropy warning
-    if (cs.entropy > 1.5e15) {
+    if (cs.entropy > COSMO.ENTROPY_DEATH * 0.75) {
       warnings.push({
         severity: "medium",
         type: "entropy",
@@ -195,10 +197,10 @@ class EndConditions {
         current: cs._scaleFactor
       },
       maximumEntropy: {
-        triggered: cs.entropy > 2e15 && cs.energyBudget < 0.02,
-        threshold: 2e15,
+        triggered: cs.entropy > COSMO.ENTROPY_DEATH && cs.energyBudget < 0.02,
+        threshold: COSMO.ENTROPY_DEATH,
         current: cs.entropy,
-        percentToThreshold: (cs.entropy / 2e15) * 100
+        percentToThreshold: (cs.entropy / COSMO.ENTROPY_DEATH) * 100
       }
     };
   }

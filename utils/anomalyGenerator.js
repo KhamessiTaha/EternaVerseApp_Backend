@@ -1,6 +1,7 @@
 const seedrandom = require("seedrandom");
 const { recordEvent } = require("./eventLog");
 const STAB = require("./stabilityConfig");
+const COSMO = require("./cosmologyConfig");
 
 const CHUNK_SIZE = 1000;
 const MAX_ANOMALIES_PER_UNIVERSE = 200; // Hard limit to prevent DB bloat
@@ -200,7 +201,20 @@ class AnomalyGenerator {
       return [];
     }
     
-    const activity = Math.min(1, cs.galaxyCount / Math.max(1, this.constants.observableGalaxies));
+    // Activity ramps with cosmic age: the older and more structured the
+    // cosmos, the more there is to go wrong.
+    //
+    // This WAS galaxyCount / observableGalaxies - but galaxyCount only reaches
+    // ~1e4-1e5 against a target of 2e11, so activity sat at ~1e-7 and the
+    // per-type spawn chance worked out to ~1e-8 per step. Natural anomalies
+    // were mathematically impossible; every one in the game came from the dev
+    // console. See cosmologyConfig.js for the calibration.
+    const activity = this._clamp(
+      (ageGyr - COSMO.ACTIVITY_START_GYR) /
+        (COSMO.ACTIVITY_FULL_GYR - COSMO.ACTIVITY_START_GYR),
+      0,
+      1
+    );
     const baseProb = this.options.anomalyProbabilityScale * activity;
 
     const anomalyTypes = this.getAnomalyTypes();
@@ -215,7 +229,9 @@ class AnomalyGenerator {
       const roll = this._rand();
 
       if (roll < prob) {
-        const severity = 1 + Math.floor(this._rand() * 3);
+        // Weighted severity: ~15% arrive at 4+, so rift sieges (severity >= 4)
+        // appear naturally rather than only after 15+ steps of escalation.
+        const severity = COSMO.rollSeverity(() => this._rand());
         created.push(this._buildAnomaly(def, severity));
 
         if (created.length >= cap) break;
@@ -409,7 +425,7 @@ class AnomalyGenerator {
     const ceiling = cs.stabilityCeiling ?? 1;
     cs.stabilityIndex = this._clamp(cs.stabilityIndex + stabilityBoost, 0, ceiling);
 
-    const entropyReduction = 3e6 * severityMultiplier * totalMultiplier;
+    const entropyReduction = COSMO.ENTROPY_PER_RESOLVE * severityMultiplier * totalMultiplier;
     cs.entropy = Math.max(0, cs.entropy - entropyReduction);
 
     cs.energyBudget = this._clamp(cs.energyBudget + 0.002 * severityMultiplier * totalMultiplier, 0, 1);

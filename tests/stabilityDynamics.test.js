@@ -39,13 +39,16 @@ test("ceiling comes from cosmology health, excludes anomalies, in [0.5,1]", () =
 
 test("active anomalies drain the reservoir", () => {
   // Start below the cosmology ceiling so the ceiling clamp doesn't mask the
-  // exact drain we're measuring.
-  const uni = makeUniverse({ currentState: { stabilityIndex: 0.7 }, anomalies: [anomaly(3), anomaly(3)] });
+  // exact drain, and stay ABOVE REGEN_ANOMALY_THRESHOLD active anomalies so
+  // regeneration doesn't offset it - this test isolates drain alone.
+  const count = cfg.REGEN_ANOMALY_THRESHOLD + 1;
+  const anomalies = Array.from({ length: count }, () => anomaly(3));
+  const uni = makeUniverse({ currentState: { stabilityIndex: 0.7 }, anomalies });
   const eng = new PhysicsEngine(uni, {});
   eng._updateCeilingAndMetrics();
   const before = uni.currentState.stabilityIndex;
   eng.applyStabilityDynamics({});
-  const expectedDrain = 2 * 3 * cfg.STABILITY_DRAIN_PER_SEVERITY;
+  const expectedDrain = count * 3 * cfg.STABILITY_DRAIN_PER_SEVERITY;
   assert.ok(uni.currentState.stabilityIndex < before);
   assert.ok(Math.abs((before - uni.currentState.stabilityIndex) - expectedDrain) < 1e-9);
 });

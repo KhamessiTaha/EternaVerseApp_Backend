@@ -11,6 +11,7 @@ const AnomalyGenerator = require("./anomalyGenerator");
 const EndConditions = require("./endConditions");
 const { recordEvent } = require("./eventLog");
 const { difficultyStability } = require("./stabilityConfig");
+const COSMO = require("./cosmologyConfig");
 
 
 
@@ -23,28 +24,31 @@ const { generatePetitions, expirePetitions } = require("./petitionSystem");
 const SECONDS_PER_STEP = 30;
 const MAX_STEPS = 100;
 
-// Difficulty configuration
+// Difficulty configuration. Time steps and anomaly rates come from
+// cosmologyConfig, which derives them all from one budget: ~400 steps from
+// Big Bang to a Type III Ascension (~2-4h of active play). Don't tune these
+// in isolation - change the target there and re-derive.
 function difficultyOptions(difficulty) {
   const map = {
     Beginner: {
-      timeStepYears: 5e7,
-      anomalyProbabilityScale: 0.002,
+      timeStepYears: COSMO.TIME_STEP_YEARS.Beginner,
+      anomalyProbabilityScale: COSMO.ANOMALY_PROBABILITY_SCALE.Beginner,
       maxAnomalyPerStep: 1,
       observableGalaxiesMultiplier: 0.7,
       difficultyModifier: 0.5,
       description: "Relaxed pace, fewer anomalies, forgiving physics"
     },
     Intermediate: {
-      timeStepYears: 2e7,
-      anomalyProbabilityScale: 0.008,
+      timeStepYears: COSMO.TIME_STEP_YEARS.Intermediate,
+      anomalyProbabilityScale: COSMO.ANOMALY_PROBABILITY_SCALE.Intermediate,
       maxAnomalyPerStep: 3,
       observableGalaxiesMultiplier: 1.0,
       difficultyModifier: 1.0,
       description: "Balanced progression, moderate anomalies"
     },
     Advanced: {
-      timeStepYears: 1e7,
-      anomalyProbabilityScale: 0.02,
+      timeStepYears: COSMO.TIME_STEP_YEARS.Advanced,
+      anomalyProbabilityScale: COSMO.ANOMALY_PROBABILITY_SCALE.Advanced,
       maxAnomalyPerStep: 5,
       observableGalaxiesMultiplier: 1.3,
       difficultyModifier: 2.0,

@@ -6,10 +6,16 @@
 // anomalyGenerator, endConditions and simulationRunner.
 
 module.exports = {
-  // Reservoir dynamics (per simulation step)
-  STABILITY_DRAIN_PER_SEVERITY: 0.006, // per active anomaly, per severity point
-  STABILITY_REGEN: 0.010,              // toward the ceiling, when calm
-  REGEN_ANOMALY_THRESHOLD: 1,          // regen only when active anomalies <= this
+  // Reservoir dynamics (per simulation step).
+  //
+  // DRAIN was 0.006, set when the anomaly spawn rate was (unknowingly) broken
+  // and almost nothing was ever active. With spawning fixed (cosmologyConfig),
+  // two live anomalies drained ~3%/step and collapsed a universe by step ~85 -
+  // before life had even formed. At 0.0015, an ignored universe takes ~90-150
+  // steps to bleed out: real pressure, survivable with attention.
+  STABILITY_DRAIN_PER_SEVERITY: 0.0015, // per active anomaly, per severity point
+  STABILITY_REGEN: 0.010,               // toward the ceiling, when calm
+  REGEN_ANOMALY_THRESHOLD: 2,           // regen while active anomalies <= this
   RESOLVE_REFILL_PER_SEVERITY: 0.040,  // instant on resolve, x grade x upgrade (persists)
 
   // Ceiling = CEILING_BASE + CEILING_SPAN * cosmologyHealth  (in [0.5, 1.0])
