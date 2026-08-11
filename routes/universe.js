@@ -1195,17 +1195,29 @@ router.post("/:id/dev/spawn-civilizations", requireAdmin, async (req, res) => {
     // natural ones; the caller owns the counters, mirroring _manageCivilizations
     engine._spawnCivilizations(count, (uni.currentState?.age || 0) / 1e9);
 
-    // Optional disposition override so attitude features (worship tribute,
-    // hostile missile fire) are testable without grinding relationship
+    // Optional overrides so tier and attitude features are testable without
+    // grinding. `civType` sets the Kardashev tier, which gates BOTH where a
+    // people is met (civPlacement) and what it can field: a Type 0 has no
+    // vessels at all, Type I keeps light craft, Type II+ a real fleet.
+    // Technology is raised to match, so a forced tier isn't a Type III that
+    // hasn't discovered fire.
     const disposition = req.body.disposition;
-    if (disposition === "worship" || disposition === "hostile") {
+    const civType = req.body.civType;
+    const TIER_TECH = { Type1: 25, Type2: 55, Type3: 85 };
+
+    if (disposition || civType) {
       for (const civ of uni.civilizations.slice(-count)) {
+        // Type 0 civs never fire and field no fleet, so any attitude test
+        // needs at least Type I.
+        const type = TIER_TECH[civType] ? civType : (disposition ? "Type1" : civ.type);
+        if (TIER_TECH[type]) {
+          civ.type = type;
+          civ.technology = Math.max(civ.technology || 0, TIER_TECH[type]);
+        }
         if (disposition === "worship") {
-          civ.type = "Type1";
           civ.relationship = 0.6;
           civ.warlikeness = Math.min(civ.warlikeness ?? 0.5, 0.4);
-        } else {
-          civ.type = "Type1"; // Type0 civs never fire - see CivilizationSystem
+        } else if (disposition === "hostile") {
           civ.relationship = -0.6;
           civ.warlikeness = 0.85;
         }
