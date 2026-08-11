@@ -9,6 +9,7 @@ const Universe = require("../models/Universe");
 const { recordEvent } = require("../utils/eventLog");
 const { prepareDiscoveries } = require("../utils/discoveryValidator");
 const { applyWarStrike } = require("../utils/warStrike");
+const { applyBombardment } = require("../utils/bombardment");
 const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgradeCatalog");
 const { doctrineModifiers, isValidDoctrine } = require("../utils/doctrineCatalog");
 const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils/simulationRunner");
@@ -911,6 +912,52 @@ router.post("/:id/war-strike", async (req, res) => {
   }
 });
 
+/**
+ * A siege the player failed to break: bombers reached a world and completed
+ * `runs` bombardment runs against it. The client batches these; the server
+ * decides what they cost, up to and including the end of a species.
+ */
+router.post("/:id/bombard", async (req, res) => {
+  try {
+    const { civId, runs, attackerCivId } = req.body;
+    if (!civId || !attackerCivId) {
+      return res.status(400).json({ ok: false, error: "civId and attackerCivId required" });
+    }
+
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    if (uni.status === "ended") {
+      return res.status(400).json({ ok: false, error: "Universe has ended" });
+    }
+
+    const result = applyBombardment(uni, civId, runs, { attackerCivId });
+    if (!result.ok) return res.status(400).json({ ok: false, error: result.reason });
+
+    recordEvent(uni, {
+      type: result.extinct ? "extinction" : "war",
+      description: result.message,
+      effects: result.effects,
+    });
+
+    uni.markModified("civilizations");
+    uni.markModified("activeWars");
+    uni.markModified("currentState");
+    uni.lastModified = new Date();
+    await uni.save();
+
+    return res.json({
+      ok: true,
+      message: result.message,
+      extinct: result.extinct,
+      universe: uni,
+    });
+  } catch (err) {
+    console.error("Bombardment error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to record bombardment" });
+  }
+});
+
 // Get engine stats without mutating model
 router.get("/:id/stats", async (req, res) => {
   try {
@@ -1155,6 +1202,59 @@ router.post("/:id/dev/start-war", requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("Dev start-war error:", err);
     return res.status(500).json({ ok: false, error: "War failed to start (ironic)" });
+  }
+});
+
+/**
+ * One-click siege: two Type II powers spawned next door and immediately at
+ * war, so the whole fleet-combat loop (raid waves, escorts, bombardment,
+ * extinction) is one button away instead of four setup steps.
+ */
+router.post("/:id/dev/stage-siege", requireAdmin, async (req, res) => {
+  try {
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    const engine = new PhysicsEngine(uni, {
+      seed: `${uni.seed}:dev:${Date.now()}`,
+      playerPosition: uni.lastPlayerPosition,
+      civSpawnRange: { min: 1, max: 2 }
+    });
+    engine._spawnCivilizations(2, (uni.currentState?.age || 0) / 1e9);
+
+    // Only Type II+ can project force at another world, so both sides need
+    // the tier (and the technology to justify it) for the siege to happen.
+    const [a, b] = uni.civilizations.slice(-2);
+    for (const civ of [a, b]) {
+      civ.type = "Type2";
+      civ.technology = Math.max(civ.technology || 0, 55);
+      civ.warlikeness = 0.7;
+    }
+    uni.currentState.civilizationCount = (uni.currentState.civilizationCount || 0) + 2;
+    uni.currentState.civilizationsCreated = (uni.currentState.civilizationsCreated || 0) + 2;
+
+    if (!Array.isArray(uni.activeWars)) uni.activeWars = [];
+    uni.activeWars.push({
+      id: `war_${Date.now()}_dev`,
+      a: a.id, b: b.id, scoreA: 0, scoreB: 0, startedAt: new Date()
+    });
+    recordEvent(uni, {
+      type: "war",
+      description: `War erupts between ${civDesignation(a.id)} and ${civDesignation(b.id)}. A strike force is already under way.`,
+      effects: { outcome: "outbreak", a: a.id, b: b.id }
+    });
+
+    uni.markModified("civilizations");
+    uni.markModified("currentState");
+    uni.markModified("activeWars");
+    uni.markModified("significantEvents");
+    await uni.save();
+
+    console.log(`🛠️ [DEV] Siege staged in ${uni.name}`);
+    return res.json({ ok: true, universe: uni });
+  } catch (err) {
+    console.error("Dev stage-siege error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to stage siege" });
   }
 });
 
