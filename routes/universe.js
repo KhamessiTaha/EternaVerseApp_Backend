@@ -10,6 +10,7 @@ const { recordEvent } = require("../utils/eventLog");
 const { prepareDiscoveries } = require("../utils/discoveryValidator");
 const { applyWarStrike } = require("../utils/warStrike");
 const { applyBombardment } = require("../utils/bombardment");
+const { shouldStageOpeningSiege, stageOpeningSiege } = require("../utils/openingSiege");
 const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgradeCatalog");
 const { doctrineModifiers, isValidDoctrine } = require("../utils/doctrineCatalog");
 const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils/simulationRunner");
@@ -219,6 +220,43 @@ router.post("/:id/simulate", async (req, res) => {
     // existed, and templates that only became eligible as the sim evolved)
     if (ensureMissions(uni) > 0) {
       uni.markModified("missions");
+    }
+
+    // The scripted first siege: a star-faring power falls on a young world
+    // near the player, once, after they've met their first civilization. The
+    // simulation wouldn't produce a Type II for ~200 more steps, so without
+    // this a first session never sees fleet combat at all. Only on a LIVE tick -
+    // the cron sweep must never stage drama nobody is present for.
+    if (shouldStageOpeningSiege(uni)) {
+      const siegeEngine = new PhysicsEngine(uni, {
+        seed: `${uni.seed}:opening-siege`,
+        playerPosition: uni.lastPlayerPosition,
+        // Next door, so the Locator's guidance is a short trip
+        civSpawnRange: { min: 1, max: 2 },
+      });
+      // Take only civs this call actually created - promoting a pre-existing
+      // one would rewrite a people the player has already met.
+      const before = uni.civilizations.length;
+      siegeEngine._spawnCivilizations(2, (uni.currentState?.age || 0) / 1e9);
+      const staged = stageOpeningSiege(uni, uni.civilizations.slice(before), now);
+
+      if (staged) {
+        uni.currentState.civilizationCount = (uni.currentState.civilizationCount || 0) + 2;
+        uni.currentState.civilizationsCreated = (uni.currentState.civilizationsCreated || 0) + 2;
+        recordEvent(uni, {
+          type: "war",
+          description: staged.message,
+          effects: {
+            outcome: "outbreak",
+            a: staged.defender.id,
+            b: staged.attacker.id,
+            scripted: true,
+          },
+        });
+        uni.markModified("civilizations");
+        uni.markModified("currentState");
+        uni.markModified("activeWars");
+      }
     }
 
     // Live tick = the player is HERE: keep the visit anchors fresh so the
@@ -1255,6 +1293,40 @@ router.post("/:id/dev/stage-siege", requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("Dev stage-siege error:", err);
     return res.status(500).json({ ok: false, error: "Failed to stage siege" });
+  }
+});
+
+/**
+ * Re-arm the scripted first siege so it can be tested more than once: clears
+ * the one-shot stamp and removes the scripted war (and the two civs it was
+ * staged with), leaving a natural universe behind. The next live tick with an
+ * observed civ and no Type II will stage a fresh one.
+ */
+router.post("/:id/dev/reset-opening-siege", requireAdmin, async (req, res) => {
+  try {
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    const scripted = (uni.activeWars || []).filter((w) => w.scripted);
+    const stagedIds = new Set(scripted.flatMap((w) => [w.a, w.b]));
+
+    uni.activeWars = (uni.activeWars || []).filter((w) => !w.scripted);
+    uni.civilizations = (uni.civilizations || []).filter((c) => !stagedIds.has(c.id));
+    uni.currentState.civilizationCount = Math.max(
+      0, (uni.currentState.civilizationCount || 0) - stagedIds.size
+    );
+    uni.scriptedSiegeAt = null;
+
+    uni.markModified("civilizations");
+    uni.markModified("currentState");
+    uni.markModified("activeWars");
+    await uni.save();
+
+    console.log(`🛠️ [DEV] Opening siege re-armed for ${uni.name}`);
+    return res.json({ ok: true, removed: stagedIds.size, universe: uni });
+  } catch (err) {
+    console.error("Dev reset-opening-siege error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to reset opening siege" });
   }
 });
 

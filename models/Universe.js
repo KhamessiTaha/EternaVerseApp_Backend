@@ -251,6 +251,9 @@ const UniverseSchema = new Schema({
   // The player's "chosen species" - the civ they've committed to shepherding up
   // the Kardashev ladder. Their rise/fall drives the game's long arc.
   chosenCivId: { type: String, default: null },
+  // When the scripted first siege was staged (utils/openingSiege.js). Null
+  // means it hasn't happened yet; it only ever happens once per universe.
+  scriptedSiegeAt: { type: Date, default: null },
   // Build-identity doctrine (utils/doctrineCatalog.js); null = stock, no bias.
   doctrine: { type: String, default: null },
   legacies: { type: [LegacySchema], default: [] },
