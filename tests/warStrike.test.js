@@ -1,7 +1,7 @@
 // tests/warStrike.test.js
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { applyWarStrike, WAR_SCORE_SWING } = require("../utils/warStrike");
+const { applyWarStrike, WAR_SCORE_SWING, INTERVENTION_RP } = require("../utils/warStrike");
 
 const makeUniverse = () => ({
   civilizations: [
@@ -10,6 +10,7 @@ const makeUniverse = () => ({
     { id: "civ_bystander", type: "Type1", relationship: 0.5, extinct: false },
   ],
   activeWars: [{ id: "w1", a: "civ_def", b: "civ_att", scoreA: 10, scoreB: 40 }],
+  research: { points: 100, totalEarned: 100 },
 });
 
 test("striking a civilization costs you its regard and hardens it", () => {
@@ -48,6 +49,47 @@ test("kills unrelated to a real war do not tip anything", () => {
   assert.equal(res.brokeSiege, false);
   assert.equal(war.scoreA, before.a);
   assert.equal(war.scoreB, before.b);
+});
+
+test("intervention pays RP, scaled to what the attacker could field", () => {
+  const uni = makeUniverse();
+  applyWarStrike(uni, "civ_att", 2, { defendingCivId: "civ_def" });
+  assert.equal(uni.research.points, 100 + INTERVENTION_RP.Type2 * 2);
+  assert.equal(uni.research.totalEarned, 100 + INTERVENTION_RP.Type2 * 2);
+
+  const bigger = makeUniverse();
+  bigger.civilizations[0].type = "Type3";
+  applyWarStrike(bigger, "civ_att", 2, { defendingCivId: "civ_def" });
+  assert.ok(bigger.research.points > uni.research.points, "a dreadnought is worth more");
+});
+
+test("shooting a DEFENDER is piracy, not intervention - it pays nothing", () => {
+  const uni = makeUniverse();
+  const res = applyWarStrike(uni, "civ_def", 3, { defendingCivId: "civ_att" });
+  assert.ok(res.ok);
+  // The war exists in both directions, so the score still tips - but the
+  // people you shot are the ones being invaded, and that earns you no reward
+  // beyond their hatred.
+  assert.equal(uni.research.points, 100 + INTERVENTION_RP.Type2 * 3,
+    "civ_att is Type2, so defending IT from civ_def pays at the Type2 rate");
+  const struck = uni.civilizations.find((c) => c.id === "civ_def");
+  assert.ok(struck.relationship < 0, "they resent you either way");
+});
+
+test("a rescue is credited once per war, however long the siege runs", () => {
+  const uni = makeUniverse();
+  applyWarStrike(uni, "civ_att", 2, { defendingCivId: "civ_def" });
+  applyWarStrike(uni, "civ_att", 2, { defendingCivId: "civ_def" });
+  applyWarStrike(uni, "civ_att", 5, { defendingCivId: "civ_def" });
+
+  const defended = uni.civilizations.find((c) => c.id === "civ_def");
+  assert.equal(defended.rescues, 1, "one war, one rescue on the legacy record");
+});
+
+test("kills with no siege behind them pay nothing", () => {
+  const uni = makeUniverse();
+  applyWarStrike(uni, "civ_bystander", 4);
+  assert.equal(uni.research.points, 100);
 });
 
 test("kill counts are clamped and unknown/dead civs are refused", () => {

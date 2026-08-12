@@ -16,6 +16,14 @@ const RELATION_LOSS = 0.12;      // how much the struck people resent you
 const RELATION_GRATITUDE = 0.15; // how much the defended people love you
 const WAR_SCORE_SWING = 6;       // how hard one kill tips a war
 
+// Intervention pays. Breaking a siege was previously worth only a relationship
+// number the player might never open a panel to see, which made the most
+// dramatic content in the game the least rewarding. RP scales with what the
+// attacker could field: a Type III dreadnought is a harder kill than a Type II
+// escort and is worth more. Killing a DEFENDER earns nothing - that is not
+// intervention, that is just piracy.
+const INTERVENTION_RP = { Type2: 12, Type3: 20 };
+
 /**
  * Apply a strike: `kills` ships belonging to `civId` were destroyed. When those
  * ships were RAIDING someone (`defendingCivId`), this is an intervention - the
@@ -60,9 +68,31 @@ function applyWarStrike(universe, civId, kills, { defendingCivId } = {}) {
       defended.relationship = clamp((defended.relationship || 0) + RELATION_GRATITUDE * n, -1, 1);
       defended.observed = true;
       effects.defendedRelationship = defended.relationship;
+
+      // A rescue is credited once per war, however many bursts of shooting it
+      // took - so a long siege doesn't inflate the number a legacy is written
+      // from (see LegacySchema.rescues).
+      if (!war.rescueCredited) {
+        war.rescueCredited = true;
+        defended.rescues = (defended.rescues || 0) + 1;
+        effects.rescues = defended.rescues;
+      }
+
+      // Pay for the intervention.
+      const rate = INTERVENTION_RP[struck.type] || 0;
+      if (rate > 0) {
+        const rp = rate * n;
+        if (!universe.research) universe.research = {};
+        universe.research.points = (universe.research.points || 0) + rp;
+        universe.research.totalEarned = (universe.research.totalEarned || 0) + rp;
+        effects.research = rp;
+      }
+
+      const paid = effects.research ? ` +${effects.research} RP.` : "";
       message =
         `You broke the siege of ${civDesignation(defendingCivId)} — ${n} ` +
-        `${civDesignation(civId)} vessel${n === 1 ? "" : "s"} destroyed. A world remembers who came.`;
+        `${civDesignation(civId)} vessel${n === 1 ? "" : "s"} destroyed.${paid} ` +
+        `A world remembers who came.`;
     }
   }
 
@@ -74,4 +104,5 @@ module.exports = {
   RELATION_LOSS,
   RELATION_GRATITUDE,
   WAR_SCORE_SWING,
+  INTERVENTION_RP,
 };
