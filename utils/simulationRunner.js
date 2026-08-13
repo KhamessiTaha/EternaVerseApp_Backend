@@ -24,6 +24,21 @@ const { generatePetitions, expirePetitions } = require("./petitionSystem");
 const SECONDS_PER_STEP = 30;
 const MAX_STEPS = 100;
 
+// A live session ticks one step at a time, SECONDS_PER_STEP apart. Anything
+// longer than a couple of steps in a single call is CATCH-UP: wall-clock time
+// the player was not here for and could not possibly have been resolving
+// anomalies during. Those steps run with offline semantics (softened drain, a
+// floor, and no crisis counter) no matter which route asks for them.
+//
+// This used to be decided by the caller - only the cron sweep passed
+// `offline` - which was fine while the sweep existed. With the sweep disabled,
+// every minute of away-time started being replayed through the ONLINE path on
+// the player's next visit: full drain, the critical multiplier, and a crisis
+// counter arming for up to 100 consecutive steps. The universe collapsed in
+// the seconds after the player came back, from a fight they were never present
+// for. Losing should require failing while playing, not while at dinner.
+const ATTENDED_STEPS = 2;
+
 // Difficulty configuration. Time steps and anomaly rates come from
 // cosmologyConfig, which derives them all from one budget: ~400 steps from
 // Big Bang to a Type III Ascension (~2-4h of active play). Don't tune these
@@ -124,10 +139,20 @@ function advanceUniverse(uni, now = new Date(), options = {}) {
   const createdAnomalies = [];
 
   const stab = difficultyStability(uni.difficulty || "Intermediate");
-  const offline = !!options.offline;
   EndChecker.options.crisisWindow = stab.crisisWindow;
 
+  // `forceSteps` (admin fast-forward) deliberately stays ONLINE however long
+  // it runs: it exists precisely to exercise the live drain/crisis arc, and
+  // the pacing tests drive the real loop through it.
+  const unattended = !!options.offline
+    || (!options.forceSteps && steps > ATTENDED_STEPS);
+
   for (let i = 0; i < steps; i++) {
+    // Where the reservoir stood before anything this step touched it. The
+    // offline floor is measured against this, so an anomaly's spawn shock
+    // can't drag the floor down with it (see applyStabilityDynamics).
+    const stabilityAtStepStart = uni.currentState?.stabilityIndex ?? 1;
+
     Physics.simulateStep(); // expansion/structures/life + ceiling + metrics
 
     const newAnomalies = AnomalyGen.generateAnomalies();
@@ -149,7 +174,8 @@ function advanceUniverse(uni, now = new Date(), options = {}) {
 
     // Reservoir drain/regen/crisis for this step's anomaly set
     Physics.applyStabilityDynamics({
-      offline,
+      offline: unattended,
+      floorReference: stabilityAtStepStart,
       drainScale: stab.drainScale,
       regenScale: stab.regenScale
     });

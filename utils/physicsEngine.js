@@ -1005,7 +1005,17 @@ class PhysicsEngine {
     if (offline) {
       // Offline drain may lower toward the floor but never below it, and never
       // lifts a universe already parked below the floor.
-      next = Math.max(next, Math.min(prev, STAB.OFFLINE_FLOOR));
+      //
+      // The reference is where the reservoir stood at the START of this step,
+      // NOT `prev`. Anomalies spawned earlier in the same step apply their
+      // stabilityImpact directly to stabilityIndex (anomalyGenerator), so by
+      // the time we get here `prev` may already be below the floor - and
+      // `min(prev, FLOOR)` would then adopt that damaged value as the new
+      // floor, ratcheting the universe down a little further every step. That
+      // is how a 100-step absence still drained a universe to ~0.04 with the
+      // floor supposedly holding it at 0.20.
+      const reference = options.floorReference ?? prev;
+      next = Math.max(next, Math.min(reference, STAB.OFFLINE_FLOOR));
     }
     cs.stabilityIndex = next;
 
