@@ -27,6 +27,23 @@ router.get("/achievements", verifyToken, async (req, res) => {
   }
 });
 
+// Every species that has reached the stars under this player, across every
+// universe they have ever kept (utils/pantheon.js). Newest first - the most
+// recent ascension is the one they'll want to see.
+router.get("/pantheon", verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("pantheon");
+    if (!user) return res.status(404).json({ ok: false, error: "User not found" });
+
+    const pantheon = [...(user.pantheon || [])].sort(
+      (a, b) => new Date(b.ascendedAt) - new Date(a.ascendedAt)
+    );
+    res.json({ ok: true, pantheon });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // Current hull/color selection + which hulls the account has unlocked so
 // far (derived live from achievements, not stored separately).
 router.get("/loadout", verifyToken, async (req, res) => {

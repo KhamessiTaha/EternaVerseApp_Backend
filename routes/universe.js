@@ -11,6 +11,7 @@ const { prepareDiscoveries } = require("../utils/discoveryValidator");
 const { applyWarStrike } = require("../utils/warStrike");
 const { applyBombardment } = require("../utils/bombardment");
 const { shouldStageOpeningSiege, stageOpeningSiege } = require("../utils/openingSiege");
+const { syncPantheon } = require("../utils/pantheon");
 const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgradeCatalog");
 const { doctrineModifiers, isValidDoctrine } = require("../utils/doctrineCatalog");
 const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils/simulationRunner");
@@ -47,6 +48,33 @@ async function findOwnedUniverse(req, res, { lean = false, select = null } = {})
   }
 
   return uni;
+}
+
+/**
+ * Copy any newly-ascended species from this universe into the player's
+ * account-wide pantheon. Returns the entries added (usually none - this runs
+ * on every tick), so the caller can announce them.
+ *
+ * Deliberately non-fatal: a failure here must never cost the player their
+ * simulation tick. The next tick re-syncs, because the source of truth is
+ * still universe.legacies.
+ */
+async function syncUserPantheon(userId, universe) {
+  try {
+    if (!(universe.legacies || []).length) return [];
+    const user = await User.findById(userId).select("pantheon");
+    if (!user) return [];
+
+    const { pantheon, added } = syncPantheon(universe, user.pantheon || []);
+    if (!added.length) return [];
+
+    user.pantheon = pantheon;
+    await user.save();
+    return added;
+  } catch (err) {
+    console.error("Pantheon sync failed (non-fatal):", err.message);
+    return [];
+  }
 }
 
 // Get all universes
@@ -265,6 +293,11 @@ router.post("/:id/simulate", async (req, res) => {
     uni.lastVisitedAt = now;
     uni.lastVisitAge = uni.currentState?.age || 0;
 
+    // An ascension is recorded on the universe it happened in, which means it
+    // would die with that universe. Copy it up to the account so it outlives
+    // the cosmos that produced it (utils/pantheon.js).
+    const ascended = await syncUserPantheon(req.user.id, uni);
+
     // ML predictions (after simulation)
     const predictions = new MLPredictor(uni).generatePredictions();
 
@@ -340,6 +373,9 @@ router.post("/:id/simulate", async (req, res) => {
       endCondition: uni.endCondition,
       endReason: uni.endReason,
       newAchievements,
+      // Species that joined the account-wide pantheon on this tick - almost
+      // always empty, and the biggest thing in the game when it isn't.
+      ascended,
       universe: uni
     });
   } catch (err) {
