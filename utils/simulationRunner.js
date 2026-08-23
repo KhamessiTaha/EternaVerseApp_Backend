@@ -11,6 +11,7 @@ const AnomalyGenerator = require("./anomalyGenerator");
 const EndConditions = require("./endConditions");
 const { recordEvent } = require("./eventLog");
 const { difficultyStability } = require("./stabilityConfig");
+const { buildChronicle } = require("./chronicle");
 const COSMO = require("./cosmologyConfig");
 
 
@@ -196,6 +197,11 @@ function advanceUniverse(uni, now = new Date(), options = {}) {
         type: "universe_end",
         description: uni.endReason
       });
+      // Write the record NOW, while the arrays still describe the universe
+      // that just died. Civilizations and anomalies get culled as the sim
+      // runs, so a summary taken later describes only the survivors.
+      uni.chronicle = buildChronicle(uni, now);
+      uni.markModified("chronicle");
       break;
     }
   }

@@ -254,6 +254,11 @@ const UniverseSchema = new Schema({
   // When the scripted first siege was staged (utils/openingSiege.js). Null
   // means it hasn't happened yet; it only ever happens once per universe.
   scriptedSiegeAt: { type: Date, default: null },
+  // What this universe WAS, frozen at the moment it ended (utils/chronicle.js).
+  // Taken at the end rather than derived later, because the arrays it
+  // summarises get culled as the simulation runs - a late summary would
+  // describe only what survived the culling. Null until the universe ends.
+  chronicle: { type: Schema.Types.Mixed, default: null },
   // Build-identity doctrine (utils/doctrineCatalog.js); null = stock, no bias.
   doctrine: { type: String, default: null },
   legacies: { type: [LegacySchema], default: [] },
