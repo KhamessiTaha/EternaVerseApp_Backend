@@ -12,7 +12,7 @@ const { applyWarStrike } = require("../utils/warStrike");
 const { applyBombardment } = require("../utils/bombardment");
 const { shouldStageOpeningSiege, stageOpeningSiege } = require("../utils/openingSiege");
 const { syncPantheon } = require("../utils/pantheon");
-const { grantHarvest } = require("../utils/materials");
+const { grantHarvest, MATERIAL_IDS } = require("../utils/materials");
 const { spend } = require("../utils/recipes");
 const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgradeCatalog");
 const { doctrineModifiers, isValidDoctrine } = require("../utils/doctrineCatalog");
@@ -1426,6 +1426,63 @@ router.post("/:id/dev/reset-opening-siege", requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("Dev reset-opening-siege error:", err);
     return res.status(500).json({ ok: false, error: "Failed to reset opening siege" });
+  }
+});
+
+/**
+ * Jump this universe's ENRICHMENT so the material era-gates can be tested.
+ *
+ * metallicity and stellarGenerations climb over hundreds of simulation steps,
+ * which means a fresh universe can never show you gold, uranium or a kilonova
+ * - the gates in utils/materials.js are simply unreachable by playing for a
+ * few minutes. This sets them directly.
+ *
+ * Deliberately does NOT touch age, stability or anomalies: this is a materials
+ * testing tool, not a time machine, and conflating the two would make it
+ * useless for isolating what it's meant to isolate.
+ */
+router.post("/:id/dev/set-era", requireAdmin, async (req, res) => {
+  try {
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, Number(v)));
+    const cs = uni.currentState;
+
+    if (req.body.metallicity !== undefined) cs.metallicity = clamp(req.body.metallicity, 0, 1);
+    if (req.body.stellarGenerations !== undefined) cs.stellarGenerations = clamp(req.body.stellarGenerations, 0, 10);
+    if (req.body.blackHoleCount !== undefined) cs.blackHoleCount = Math.max(0, Number(req.body.blackHoleCount));
+
+    uni.markModified("currentState");
+    await uni.save();
+
+    console.log(`🛠️ [DEV] Era set in ${uni.name}: Z=${cs.metallicity} gen=${cs.stellarGenerations} BH=${cs.blackHoleCount}`);
+    return res.json({ ok: true, universe: uni });
+  } catch (err) {
+    console.error("Dev set-era error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to set era" });
+  }
+});
+
+/** Fill the hold, so Mk 2/Mk 3 crafting can be tested without a harvest grind. */
+router.post("/:id/dev/grant-materials", requireAdmin, async (req, res) => {
+  try {
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    const amount = Math.max(1, Math.min(999, Math.floor(Number(req.body.amount) || 20)));
+    const stock = { ...(uni.materials || {}) };
+    for (const id of MATERIAL_IDS) stock[id] = (Number(stock[id]) || 0) + amount;
+    uni.materials = stock;
+
+    uni.markModified("materials");
+    await uni.save();
+
+    console.log(`🛠️ [DEV] Granted ${amount} of every material in ${uni.name}`);
+    return res.json({ ok: true, materials: uni.materials, universe: uni });
+  } catch (err) {
+    console.error("Dev grant-materials error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to grant materials" });
   }
 });
 
