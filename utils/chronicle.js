@@ -15,6 +15,8 @@
 // Pure over the universe document, so it unit-tests and the runner stays a
 // thin caller.
 
+const { codeForSeed } = require("./seedCode");
+
 const round = (n, places = 2) => {
   const f = 10 ** places;
   return Math.round((n || 0) * f) / f;
@@ -75,6 +77,14 @@ function buildChronicle(universe, endedAt = new Date()) {
     name: universe.name || null,
     difficulty: universe.difficulty || null,
     doctrine: universe.doctrine || null,
+    // The code goes ON the death card. That's what turns a screenshot into an
+    // invitation: someone sees the image, types the code, plays the same
+    // cosmos. `reproducible` is false for universes made before share codes,
+    // where the code is display-only.
+    ...(() => {
+      const { code, reproducible } = codeForSeed(universe.seed);
+      return { shareCode: code, shareCodeReproducible: reproducible };
+    })(),
   };
 }
 

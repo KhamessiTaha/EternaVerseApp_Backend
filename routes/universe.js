@@ -15,6 +15,7 @@ const { syncPantheon } = require("../utils/pantheon");
 const { grantHarvest, MATERIAL_IDS } = require("../utils/materials");
 const { spend } = require("../utils/recipes");
 const { placeArtifact, recordWork } = require("../utils/artifacts");
+const { normalizeCode, generateCode, codeForSeed } = require("../utils/seedCode");
 const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgradeCatalog");
 const { doctrineModifiers, isValidDoctrine } = require("../utils/doctrineCatalog");
 const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils/simulationRunner");
@@ -115,10 +116,20 @@ router.post("/", async (req, res) => {
       ...constants
     };
 
+    // Share codes: the seed a player can read out loud and hand to someone
+    // else. `shareCode` from the client (someone playing a friend's universe)
+    // wins; otherwise a fresh code is generated and used AS the seed, so every
+    // universe made from here on is perfectly reproducible from its code.
+    // A raw `seed` is still honoured for existing tooling.
+    const requested = normalizeCode(req.body.shareCode);
+    if (req.body.shareCode && !requested) {
+      return res.status(400).json({ ok: false, error: "That doesn't look like a universe code" });
+    }
+
     const uni = new Universe({
       userId: req.user.id,
       name: name || `Universe-${Date.now()}`,
-      seed: seed || Math.random().toString(36).slice(2),
+      seed: requested || seed || generateCode(),
       difficulty: selectedDifficulty,
       constants: universeConstants,
       initialConditions: {
