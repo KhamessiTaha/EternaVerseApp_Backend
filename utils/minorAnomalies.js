@@ -10,15 +10,15 @@
 // rewards) vs CRITICAL anomalies (physics-engine events, big effects).
 
 const { doctrineModifiers } = require("./doctrineCatalog");
+// Was a third, simplified copy of the grade ladder with its own thresholds
+// (90/75/50 vs 95/85/70/50) - so the same performance was graded differently
+// depending on which kind of anomaly you contained. One ladder now.
+const { performanceMultiplier } = require("./gradeTiers");
 
 const MINOR_ID_PATTERN = /^-?\d+:-?\d+:\d+$/;
 const MAX_RESOLVED_STORED = 2000; // FIFO cap on the dedup history
 
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-
-// Same grade philosophy as critical anomalies, simplified
-const performanceMultiplier = (accuracy) =>
-  accuracy >= 90 ? 1.25 : accuracy >= 75 ? 1.1 : accuracy >= 50 ? 1.0 : 0.8;
 
 /**
  * Validate + apply a minor anomaly resolution. Mutates the universe

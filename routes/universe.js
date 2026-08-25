@@ -533,6 +533,7 @@ router.post("/:id/resolve-anomaly", async (req, res) => {
     uni.markModified('anomalies');
     uni.markModified('currentState');
     uni.markModified('metrics');
+    uni.markModified('research');
     uni.markModified('significantEvents');
     
     uni.lastModified = new Date();
@@ -550,6 +551,7 @@ router.post("/:id/resolve-anomaly", async (req, res) => {
       anomalyId,
       stabilityBoost: result.stabilityBoost,
       entropyReduction: result.entropyReduction,
+      reward: result.reward,
       performanceMultiplier: result.performanceMultiplier,
       accuracy: result.accuracy,
       universe: uni,

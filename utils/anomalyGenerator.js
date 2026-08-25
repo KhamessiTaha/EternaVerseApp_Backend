@@ -6,25 +6,9 @@ const COSMO = require("./cosmologyConfig");
 const CHUNK_SIZE = 1000;
 const MAX_ANOMALIES_PER_UNIVERSE = 200; // Hard limit to prevent DB bloat
 
-// Mirrors the frontend's GRADE_TIERS (src/components/game/utils.js) so a
-// minigame grade means the same reward whether it's shown to the player or
-// applied server-side. If these ever diverge, that's a balance bug to fix,
-// not an API contract to enforce - the two codebases don't share a package.
-const PERFORMANCE_TIERS = [
-  { min: 95, multiplier: 1.3 },  // S
-  { min: 85, multiplier: 1.15 }, // A
-  { min: 70, multiplier: 1.0 },  // B
-  { min: 50, multiplier: 0.85 }, // C
-  { min: 0, multiplier: 0.5 },   // technically resolved, but sloppy - still some credit
-];
-
-function getPerformanceMultiplier(accuracy) {
-  // No accuracy reported (e.g. an older client) - don't penalize, full reward
-  if (typeof accuracy !== "number" || Number.isNaN(accuracy)) return 1.0;
-  const clamped = Math.max(0, Math.min(100, accuracy));
-  const tier = PERFORMANCE_TIERS.find((t) => clamped >= t.min) || PERFORMANCE_TIERS[PERFORMANCE_TIERS.length - 1];
-  return tier.multiplier;
-}
+// The grade ladder lives in utils/gradeTiers.js - one copy, shared with
+// minorAnomalies, mirroring the frontend's GRADE_TIERS.
+const { performanceMultiplier: getPerformanceMultiplier, RESOLVE_RP_PER_SEVERITY } = require("./gradeTiers");
 
 class AnomalyGenerator {
   constructor(universe, options = {}) {
@@ -430,6 +414,15 @@ class AnomalyGenerator {
 
     cs.energyBudget = this._clamp(cs.energyBudget + 0.002 * severityMultiplier * totalMultiplier, 0, 1);
 
+    // Research for containing a CRITICAL anomaly. This paid nothing at all
+    // until now - the headline containment act awarded zero of the game's main
+    // currency, while ambient minor anomalies paid 3/severity. Graded, so
+    // skill shows up in RP and not only in stability.
+    const reward = Math.max(1, Math.round(RESOLVE_RP_PER_SEVERITY * severityMultiplier * totalMultiplier));
+    if (!this.universe.research) this.universe.research = {};
+    this.universe.research.points = (this.universe.research.points || 0) + reward;
+    this.universe.research.totalEarned = (this.universe.research.totalEarned || 0) + reward;
+
     this.universe.metrics.playerInterventions =
       (this.universe.metrics.playerInterventions || 0) + 1;
     this.universe.metrics.anomaliesResolved =
@@ -444,6 +437,7 @@ class AnomalyGenerator {
       success: true,
       stabilityBoost,
       entropyReduction,
+      reward,
       performanceMultiplier,
       rewardMultiplier,
       accuracy: typeof accuracy === "number" ? Math.max(0, Math.min(100, accuracy)) : null,
