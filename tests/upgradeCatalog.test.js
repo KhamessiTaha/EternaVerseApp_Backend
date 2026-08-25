@@ -3,7 +3,15 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { validatePurchase, UPGRADE_TRACKS } = require("../utils/upgradeCatalog");
 
-const uni = (points, upgrades = {}) => ({ research: { points }, upgrades });
+// Stocked with matter by default so these tests stay about RP and levels.
+// Mk 2+ now also costs materials (utils/recipes.js) - that gating has its own
+// tests in recipes.test.js.
+const STOCKED = {
+  carbon: 99, oxygen: 99, iron: 99,
+  gold: 99, platinum: 99, uranium: 99, degenerate: 99, hawking: 99,
+};
+const uni = (points, upgrades = {}, materials = STOCKED) =>
+  ({ research: { points }, upgrades, materials });
 
 test("rejects unknown tracks", () => {
   const r = validatePurchase(uni(1000), "warpDrive");

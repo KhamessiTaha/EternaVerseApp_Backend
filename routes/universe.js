@@ -13,6 +13,7 @@ const { applyBombardment } = require("../utils/bombardment");
 const { shouldStageOpeningSiege, stageOpeningSiege } = require("../utils/openingSiege");
 const { syncPantheon } = require("../utils/pantheon");
 const { grantHarvest } = require("../utils/materials");
+const { spend } = require("../utils/recipes");
 const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgradeCatalog");
 const { doctrineModifiers, isValidDoctrine } = require("../utils/doctrineCatalog");
 const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils/simulationRunner");
@@ -891,16 +892,23 @@ router.post("/:id/upgrade", async (req, res) => {
     }
 
     uni.research.points -= check.cost;
+    // RP paid for the design; matter builds the thing (utils/recipes.js).
+    // Mk 1 requires none, so early game spends exactly what it always did.
+    uni.materials = spend(uni.materials, check.requirement);
     uni.upgrades[req.body.track] = check.nextLevel;
 
     recordEvent(uni, {
       type: "upgrade",
       description: `Installed ${check.label} Mk ${check.nextLevel}`,
-      effects: { track: req.body.track, level: check.nextLevel, cost: check.cost }
+      effects: {
+        track: req.body.track, level: check.nextLevel,
+        cost: check.cost, materials: check.requirement || null,
+      }
     });
 
     uni.markModified("upgrades");
     uni.markModified("research");
+    uni.markModified("materials");
     uni.lastModified = new Date();
     await uni.save();
 
@@ -912,6 +920,7 @@ router.post("/:id/upgrade", async (req, res) => {
       ok: true,
       upgrades: uni.upgrades,
       research: uni.research,
+      materials: uni.materials,
       newAchievements
     });
   } catch (err) {

@@ -7,6 +7,8 @@
 // display and applies the client-side stat effects. If they diverge, that's
 // a balance bug to fix, not an API contract to enforce.
 
+const { requirementFor, canAfford } = require("./recipes");
+
 // costs[n] is the price of going from level n to level n+1;
 // max level is costs.length.
 const UPGRADE_TRACKS = {
@@ -42,7 +44,24 @@ function validatePurchase(universe, track) {
     return { ok: false, reason: `Insufficient research: ${info.label} Mk ${level + 1} costs ${cost} RP` };
   }
 
-  return { ok: true, cost, nextLevel: level + 1, label: info.label };
+  // RP researches the design; matter builds the thing. Mk 1 needs no matter,
+  // so early game is unchanged - but the top of every track is gated on what
+  // this universe has actually forged (utils/recipes.js).
+  const requirement = requirementFor(track, level);
+  const afford = canAfford(universe.materials, requirement);
+  if (!afford.ok) {
+    const shortfall = Object.entries(afford.missing)
+      .map(([id, n]) => `${n} ${id}`)
+      .join(", ");
+    return {
+      ok: false,
+      reason: `${info.label} Mk ${level + 1} needs ${shortfall}`,
+      missing: afford.missing,
+      requirement,
+    };
+  }
+
+  return { ok: true, cost, nextLevel: level + 1, label: info.label, requirement };
 }
 
 module.exports = { UPGRADE_TRACKS, CONTAINMENT_BONUS_PER_LEVEL, validatePurchase };
