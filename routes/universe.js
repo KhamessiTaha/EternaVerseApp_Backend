@@ -593,8 +593,15 @@ router.post("/:id/discoveries", async (req, res) => {
       // server clamps it to the legitimate ceiling (+60%) so a tampered payload
       // can never do better than a perfect streak would.
       const streakMult = Math.min(1.6, Math.max(1, ...raw.map((r) => Number(r?.surveyMult) || 1)));
+      // Classify-before-scan bonus: the client reports whether the player
+      // correctly called a galaxy's Hubble class from its rendered shape,
+      // clamped the same way to +50%. Verifying it server-side would mean
+      // regenerating procedural world objects here, which is a far larger
+      // change - so this trusts the report and caps what a lie can buy.
+      // Combined ceiling: 1.6 x 1.5 = 2.4.
+      const classifyMult = Math.min(1.5, Math.max(1, ...raw.map((r) => Number(r?.classifyMult) || 1)));
       const base = accepted.reduce((sum, d) => sum + d.researchValue, 0);
-      const earned = Math.round(base * streakMult);
+      const earned = Math.round(base * streakMult * classifyMult);
       if (!uni.research) uni.research = {};
       uni.research.points = (uni.research.points || 0) + earned;
       uni.research.totalEarned = (uni.research.totalEarned || 0) + earned;
