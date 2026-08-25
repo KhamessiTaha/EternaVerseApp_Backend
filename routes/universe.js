@@ -12,6 +12,7 @@ const { applyWarStrike } = require("../utils/warStrike");
 const { applyBombardment } = require("../utils/bombardment");
 const { shouldStageOpeningSiege, stageOpeningSiege } = require("../utils/openingSiege");
 const { syncPantheon } = require("../utils/pantheon");
+const { grantHarvest } = require("../utils/materials");
 const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgradeCatalog");
 const { doctrineModifiers, isValidDoctrine } = require("../utils/doctrineCatalog");
 const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils/simulationRunner");
@@ -1038,6 +1039,50 @@ router.post("/:id/bombard", async (req, res) => {
   } catch (err) {
     console.error("Bombardment error:", err);
     return res.status(500).json({ ok: false, error: "Failed to record bombardment" });
+  }
+});
+
+/**
+ * Harvest matter from a cosmic source.
+ *
+ * The client reports WHAT it harvested from and how well it did; the server
+ * decides what that yields. The era gate is enforced here rather than trusted,
+ * because unlike the classify bonus this IS verifiable - the server owns
+ * currentState, so it knows whether this universe has forged gold yet.
+ */
+router.post("/:id/harvest", async (req, res) => {
+  try {
+    const { source, grade } = req.body;
+    if (!source) return res.status(400).json({ ok: false, error: "source required" });
+
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    if (uni.status === "ended") {
+      return res.status(400).json({ ok: false, error: "Universe has ended" });
+    }
+
+    const result = grantHarvest(uni, source, grade);
+    if (!result.ok) {
+      // An empty source is a legitimate outcome, not an error - the universe
+      // simply hasn't made anything of that kind yet. 200 so the client can
+      // explain it rather than treat it as a failure.
+      return res.json({ ok: false, empty: !!result.empty, reason: result.reason });
+    }
+
+    uni.markModified("materials");
+    uni.lastModified = new Date();
+    await uni.save();
+
+    return res.json({
+      ok: true,
+      id: result.id,
+      amount: result.amount,
+      materials: uni.materials,
+    });
+  } catch (err) {
+    console.error("Harvest error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to record harvest" });
   }
 });
 

@@ -254,6 +254,11 @@ const UniverseSchema = new Schema({
   // When the scripted first siege was staged (utils/openingSiege.js). Null
   // means it hasn't happened yet; it only ever happens once per universe.
   scriptedSiegeAt: { type: Date, default: null },
+  // Harvested matter, per material id (utils/materials.js). Deliberately on
+  // the UNIVERSE and not the account: materials are forged by THIS cosmos and
+  // die with it. What carries across universes is the pantheon and the
+  // artifacts you build - not a stockpile.
+  materials: { type: Schema.Types.Mixed, default: () => ({}) },
   // What this universe WAS, frozen at the moment it ended (utils/chronicle.js).
   // Taken at the end rather than derived later, because the arrays it
   // summarises get culled as the simulation runs - a late summary would
