@@ -37,6 +37,17 @@ const userSchema = new mongoose.Schema({
     }],
     default: [],
   },
+  // The Self: the warden's cross-universe identity (see utils/selfSync.js).
+  //
+  // This lived only in localStorage under a GLOBAL key, so clearing cookies
+  // destroyed a player's entire identity and two accounts on one browser
+  // shared one warden. It belongs to the ACCOUNT. localStorage stays as a
+  // write-through cache and offline buffer; the server merges rather than
+  // overwrites, so two devices can never clobber each other.
+  //
+  // Mixed because the shape is owned and validated by selfSync.normalize(),
+  // which is the single place that decides what a valid Self is.
+  self: { type: mongoose.Schema.Types.Mixed, default: null },
   // Account-wide ship loadout (see utils/hullCatalog.js) - cosmetic only,
   // carries across every universe. Validated server-side against the
   // player's unlocked achievements on every write, never trust the client.

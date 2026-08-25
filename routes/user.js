@@ -2,6 +2,7 @@ const express = require("express");
 const verifyToken = require("../middleware/authMiddleware");
 const User = require("../models/User");
 const { unlockedHullIds, validateLoadout } = require("../utils/hullCatalog");
+const { mergeSelf, defaults } = require("../utils/selfSync");
 
 const router = express.Router();
 
@@ -23,6 +24,45 @@ router.get("/achievements", verifyToken, async (req, res) => {
 
     res.json({ ok: true, achievements: user.achievements });
   } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// The Self: the warden's cross-universe identity, account-wide.
+//
+// GET returns the canonical record (null-safe: a new account gets defaults).
+router.get("/self", verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("self");
+    if (!user) return res.status(404).json({ ok: false, error: "User not found" });
+    res.json({ ok: true, self: user.self || defaults() });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * PUT merges the client's whole local Self into the account's and returns the
+ * canonical result, which the client then adopts.
+ *
+ * MERGE, never overwrite: two devices can each hold progress the other has
+ * never seen, and last-write-wins would throw one away. selfSync.mergeSelf
+ * owns those rules - see the long comment there for why cycle state has to
+ * move as one unit.
+ */
+router.put("/self", verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("self");
+    if (!user) return res.status(404).json({ ok: false, error: "User not found" });
+
+    const merged = mergeSelf(user.self, req.body?.self, new Date());
+    user.self = merged;
+    user.markModified("self");
+    await user.save();
+
+    res.json({ ok: true, self: merged });
+  } catch (err) {
+    console.error("Self sync failed:", err.message);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
