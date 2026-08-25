@@ -14,7 +14,7 @@ const makeUniverse = (over = {}) => ({
     age: 204.3e9, galaxyCount: 1.2e11, starCount: 4.5e20,
     civilizationsCreated: 31,
   },
-  metrics: { playerInterventions: 88 },
+  metrics: { playerInterventions: 88, anomaliesResolved: 61 },
   research: { totalEarned: 5400, discoveryCount: 143 },
   civilizations: [
     { id: "c1", observed: true, extinct: false, rescues: 2 },
@@ -60,10 +60,41 @@ test("what ascended is recorded by name - it outlasts the universe", () => {
 
 test("it records what the player did with their hands", () => {
   const c = buildChronicle(makeUniverse());
-  assert.equal(c.anomaliesResolved, 2);
+  assert.equal(c.anomaliesResolved, 61);
   assert.equal(c.interventions, 88);
   assert.equal(c.researchEarned, 5400);
   assert.equal(c.discoveries, 143);
+});
+
+test("contained anomalies survive the pruning that deletes them", () => {
+  // The bug: a player who contained dozens was told "anomalies contained: 0".
+  // autoCleanup() drops resolved anomalies older than five minutes once the
+  // array hits 200, so counting universe.anomalies only ever saw the last few
+  // minutes of a whole run. At death, that is usually none.
+  const pruned = makeUniverse();
+  pruned.anomalies = [];                       // everything already culled
+  pruned.metrics.anomaliesResolved = 61;
+
+  assert.equal(buildChronicle(pruned).anomaliesResolved, 61);
+});
+
+test("minor anomalies count too - they never entered universe.anomalies", () => {
+  // Minors are chunk-seeded client-side and tracked by id in
+  // resolvedMinorAnomalies, so a filter over universe.anomalies never counted
+  // a single one of them, at any point in a run.
+  const u = makeUniverse();
+  u.anomalies = [];
+  u.resolvedMinorAnomalies = ["0:0:1", "0:0:2", "1:-3:0"];
+  u.metrics.anomaliesResolved = 3; // both resolve paths increment this
+
+  assert.equal(buildChronicle(u).anomaliesResolved, 3);
+});
+
+test("a universe with no metrics reports zero rather than throwing", () => {
+  const u = makeUniverse();
+  delete u.metrics;
+  assert.equal(buildChronicle(u).anomaliesResolved, 0);
+  assert.equal(buildChronicle(u).interventions, 0);
 });
 
 test("a bare document does not throw", () => {

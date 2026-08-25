@@ -31,7 +31,6 @@ function buildChronicle(universe, endedAt = new Date()) {
   const cs = universe.currentState || {};
   const civs = universe.civilizations || [];
   const legacies = universe.legacies || [];
-  const anomalies = universe.anomalies || [];
 
   // "Met" is the honest measure of a relationship: observed, or moved by
   // anything you did. A civ that rose and fell without you ever seeing it
@@ -67,8 +66,23 @@ function buildChronicle(universe, endedAt = new Date()) {
       uplifts: l.uplifts || 0,
     })),
 
-    // What you did with your hands
-    anomaliesResolved: anomalies.filter((a) => a.resolved).length,
+    // What you did with your hands.
+    //
+    // Read from metrics, NOT by filtering universe.anomalies - which was the
+    // bug that reported "anomalies contained: 0" to players who had contained
+    // dozens. Two reasons that filter can never work:
+    //
+    //   1. autoCleanup() drops resolved anomalies older than five minutes once
+    //      the array hits 200, and the cleanup route prunes on a timer too. So
+    //      the filter only ever counted the last few minutes of a whole run.
+    //   2. MINOR anomalies never enter universe.anomalies at all - they're
+    //      chunk-seeded client-side and tracked by id in
+    //      resolvedMinorAnomalies. They were never counted, at any point.
+    //
+    // metrics.anomaliesResolved is incremented by BOTH resolve paths
+    // (anomalyGenerator.resolveAnomaly and minorAnomalies.applyMinorResolution)
+    // and is monotonic, so it survives every cull.
+    anomaliesResolved: universe.metrics?.anomaliesResolved || 0,
     interventions: universe.metrics?.playerInterventions || 0,
     researchEarned: universe.research?.totalEarned || 0,
     discoveries: universe.research?.discoveryCount || 0,
