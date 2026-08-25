@@ -16,6 +16,8 @@ const { grantHarvest, MATERIAL_IDS } = require("../utils/materials");
 const { spend } = require("../utils/recipes");
 const { placeArtifact, recordWork } = require("../utils/artifacts");
 const { normalizeCode, generateCode, codeForSeed } = require("../utils/seedCode");
+const { buildRunEntry, rankRuns } = require("../utils/leaderboard");
+const Run = require("../models/Run");
 const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgradeCatalog");
 const { doctrineModifiers, isValidDoctrine } = require("../utils/doctrineCatalog");
 const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils/simulationRunner");
@@ -55,6 +57,25 @@ async function findOwnedUniverse(req, res, { lean = false, select = null } = {})
 }
 
 /**
+ * Put a finished universe on its seed's board.
+ *
+ * Non-fatal and idempotent: the unique index on universeId means a duplicate
+ * insert throws E11000, which is the correct outcome and not an error worth
+ * failing a simulation tick over.
+ */
+async function recordRun(userId, universe) {
+  try {
+    const user = await User.findById(userId).select("username");
+    const entry = buildRunEntry(universe, user);
+    if (!entry) return; // no chronicle, or a code that can't rebuild it
+    await Run.create(entry);
+    console.log(`🏆 Run recorded on ${entry.shareCode}: ${entry.ascensions} ascensions, ${entry.rescued} saved`);
+  } catch (err) {
+    if (err?.code !== 11000) console.error("Run record failed (non-fatal):", err.message);
+  }
+}
+
+/**
  * Copy any newly-ascended species from this universe into the player's
  * account-wide pantheon. Returns the entries added (usually none - this runs
  * on every tick), so the caller can announce them.
@@ -80,6 +101,47 @@ async function syncUserPantheon(userId, universe) {
     return [];
   }
 }
+
+/**
+ * The board for one seed: same cosmos, different wardens.
+ *
+ * Deliberately NOT scoped to the requesting user - the whole point is seeing
+ * what other people did with the universe you're in. It exposes only a
+ * username and six figures per row.
+ *
+ * Placed above `/:id` so "leaderboard" is never read as a universe id.
+ */
+router.get("/leaderboard/:code", async (req, res) => {
+  try {
+    const code = normalizeCode(req.params.code);
+    if (!code) return res.status(400).json({ ok: false, error: "Not a universe code" });
+
+    const rows = await Run.find({ shareCode: code })
+      .sort({ ascensions: -1, rescued: -1, finalAgeGyr: -1, endedAt: 1 })
+      .limit(50)
+      .lean();
+
+    const board = rankRuns(rows).map((r, i) => ({
+      place: i + 1,
+      username: r.username,
+      universeName: r.universeName,
+      difficulty: r.difficulty,
+      ascensions: r.ascensions,
+      rescued: r.rescued,
+      finalAgeGyr: r.finalAgeGyr,
+      endCondition: r.endCondition,
+      endedAt: r.endedAt,
+      // So the client can highlight the player's own row without exposing ids.
+      isYou: r.userId === req.user.id,
+      universeId: r.universeId,
+    }));
+
+    return res.json({ ok: true, code, board });
+  } catch (err) {
+    console.error("Leaderboard error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to load the board" });
+  }
+});
 
 // Get all universes
 router.get("/", async (req, res) => {
@@ -370,6 +432,10 @@ router.post("/:id/simulate", async (req, res) => {
 
     if (uni.status === "ended") {
       console.log(`🌑 Universe ended: ${uni.endCondition} - ${uni.endReason}`);
+      // The chronicle was frozen inside advanceUniverse; this puts it on the
+      // board for its seed, so the next person to play this code has someone
+      // to beat.
+      await recordRun(req.user.id, uni);
     }
 
     const newAchievements = await awardAchievements(User, req.user.id, uni);
