@@ -48,6 +48,10 @@ const userSchema = new mongoose.Schema({
   // Mixed because the shape is owned and validated by selfSync.normalize(),
   // which is the single place that decides what a valid Self is.
   self: { type: mongoose.Schema.Types.Mixed, default: null },
+  // Everything this player has BUILT, across every universe (utils/artifacts.js).
+  // Universes die; works don't. This is the list the Curator names when you
+  // arrive somewhere new - the same job the pantheon does for ascended species.
+  works: { type: [mongoose.Schema.Types.Mixed], default: [] },
   // Account-wide ship loadout (see utils/hullCatalog.js) - cosmetic only,
   // carries across every universe. Validated server-side against the
   // player's unlocked achievements on every write, never trust the client.

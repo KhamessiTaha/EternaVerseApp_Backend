@@ -14,6 +14,7 @@ const { shouldStageOpeningSiege, stageOpeningSiege } = require("../utils/opening
 const { syncPantheon } = require("../utils/pantheon");
 const { grantHarvest, MATERIAL_IDS } = require("../utils/materials");
 const { spend } = require("../utils/recipes");
+const { placeArtifact, recordWork } = require("../utils/artifacts");
 const { validatePurchase, CONTAINMENT_BONUS_PER_LEVEL } = require("../utils/upgradeCatalog");
 const { doctrineModifiers, isValidDoctrine } = require("../utils/doctrineCatalog");
 const { difficultyOptions, simulationSeed, advanceUniverse } = require("../utils/simulationRunner");
@@ -1092,6 +1093,62 @@ router.post("/:id/harvest", async (req, res) => {
   } catch (err) {
     console.error("Harvest error:", err);
     return res.status(500).json({ ok: false, error: "Failed to record harvest" });
+  }
+});
+
+/**
+ * Place an artifact - the only thing in this game the player MAKES.
+ *
+ * Spends matter, puts an object in the world at a position AND a cosmic scale,
+ * and copies it to the account so the work outlives the universe. The account
+ * copy is deliberately non-fatal: losing it costs an echo later, losing the
+ * player's matter would cost them the build.
+ */
+router.post("/:id/artifact", async (req, res) => {
+  try {
+    const { kind, x, y, scale, path, note, civId } = req.body;
+    if (!kind) return res.status(400).json({ ok: false, error: "kind required" });
+
+    const uni = await findOwnedUniverse(req, res);
+    if (!uni) return;
+
+    if (uni.status === "ended") {
+      return res.status(400).json({ ok: false, error: "Nothing can be built in an ended universe" });
+    }
+
+    const result = placeArtifact(uni, { kind, x, y, scale, path, note, civId });
+    if (!result.ok) return res.status(400).json({ ok: false, error: result.reason });
+
+    recordEvent(uni, {
+      type: "artifact",
+      description: `Raised a ${result.artifact.label}${result.artifact.note ? ` — "${result.artifact.note}"` : ""}`,
+      effects: { kind, x: result.artifact.x, y: result.artifact.y },
+    });
+
+    uni.markModified("materials");
+    uni.markModified("artifacts");
+    uni.lastModified = new Date();
+    await uni.save();
+
+    try {
+      const user = await User.findById(req.user.id).select("works");
+      if (user) {
+        const { works, added } = recordWork(user.works, result.artifact, uni);
+        if (added) { user.works = works; await user.save(); }
+      }
+    } catch (err) {
+      console.error("Work record failed (non-fatal):", err.message);
+    }
+
+    return res.json({
+      ok: true,
+      artifact: result.artifact,
+      materials: uni.materials,
+      artifacts: uni.artifacts,
+    });
+  } catch (err) {
+    console.error("Artifact error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to raise artifact" });
   }
 });
 

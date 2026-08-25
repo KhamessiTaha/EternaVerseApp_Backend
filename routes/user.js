@@ -67,6 +67,21 @@ router.put("/self", verifyToken, async (req, res) => {
   }
 });
 
+// Everything this player has BUILT, across every universe. Universes die;
+// works don't - this is what lets the Curator name them somewhere new.
+router.get("/works", verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("works");
+    if (!user) return res.status(404).json({ ok: false, error: "User not found" });
+    const works = [...(user.works || [])].sort(
+      (a, b) => new Date(b.placedAt) - new Date(a.placedAt)
+    );
+    res.json({ ok: true, works });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // Every species that has reached the stars under this player, across every
 // universe they have ever kept (utils/pantheon.js). Newest first - the most
 // recent ascension is the one they'll want to see.

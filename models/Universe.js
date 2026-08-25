@@ -259,6 +259,10 @@ const UniverseSchema = new Schema({
   // die with it. What carries across universes is the pantheon and the
   // artifacts you build - not a stockpile.
   materials: { type: Schema.Types.Mixed, default: () => ({}) },
+  // The only things the player MAKES (utils/artifacts.js). Beacons, monuments
+  // and seed vaults, placed at a position AND a cosmic scale. Copied to the
+  // account on placement so a work outlives the cosmos that held it.
+  artifacts: { type: [Schema.Types.Mixed], default: [] },
   // What this universe WAS, frozen at the moment it ended (utils/chronicle.js).
   // Taken at the end rather than derived later, because the arrays it
   // summarises get culled as the simulation runs - a late summary would
