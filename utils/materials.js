@@ -33,9 +33,25 @@ const MATERIALS = {
   iron:       { tier: 2, sources: ["supernova"],         gate: (cs) => num(cs?.stellarGenerations) >= 2 },
   gold:       { tier: 3, sources: ["merger"],            gate: (cs) => num(cs?.metallicity) >= 0.3 },
   platinum:   { tier: 3, sources: ["merger"],            gate: (cs) => num(cs?.metallicity) >= 0.4 },
-  uranium:    { tier: 4, sources: ["merger"],            gate: (cs) => num(cs?.metallicity) >= 0.6 },
-  degenerate: { tier: 5, sources: ["merger"],            gate: (cs) => num(cs?.stellarGenerations) >= 5 },
-  hawking:    { tier: 5, sources: ["quasar"],            gate: (cs) => num(cs?.blackHoleCount) > 0 },
+  // 0.45, not 0.6. Enrichment is logistic against a DEPLETING gas reservoir
+  // (physicsEngine: gasLeft = exp(-ageGyr/10)), so metallicity asymptotes at
+  // ~60% of solar and never gets further. A 0.6 gate sat a fraction above that
+  // ceiling: measured against the real engine it opened at step 748 on
+  // Beginner, 1110 on Intermediate, and NEVER on Advanced - against a 400-step
+  // run. It was not "rare", it was unobtainable.
+  uranium:    { tier: 4, sources: ["merger"],            gate: (cs) => num(cs?.metallicity) >= 0.45 },
+  // Gated on black holes, NOT stellarGenerations. That counter is clamped at
+  // 10 and reaches the clamp by step 25 on every difficulty, so every
+  // threshold above ~1 fires almost immediately - `>= 5` opened the rarest
+  // material in the game on step 3. blackHoleCount is the one late quantity
+  // with real dynamic range (1e8 -> 1e17 across a run), and remnant matter
+  // accumulating as stars die is what degenerate matter physically IS.
+  degenerate: { tier: 5, sources: ["merger"],            gate: (cs) => num(cs?.blackHoleCount) >= 3e16 },
+  // Likewise: `> 0` was true on step 1, because a universe is seeded with
+  // 5e3 black holes at genesis. Hawking radiation is the signature of a
+  // universe whose black holes have come to dominate it, so it asks for a
+  // population, not for one to exist.
+  hawking:    { tier: 5, sources: ["quasar"],            gate: (cs) => num(cs?.blackHoleCount) >= 5e16 },
 };
 
 const MATERIAL_IDS = Object.keys(MATERIALS);

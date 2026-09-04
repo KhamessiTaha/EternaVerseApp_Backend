@@ -13,7 +13,9 @@ const uni = (cs = {}, materials = {}) => ({
 });
 
 const YOUNG = () => uni();
-const MATURE = () => uni({ metallicity: 0.7, stellarGenerations: 6, blackHoleCount: 1e6 });
+// A real run reaches ~1e17 black holes; the tier-5 gates sit at 3e16 and 5e16,
+// so a "mature" fixture needs a mature black-hole population, not a round number.
+const MATURE = () => uni({ metallicity: 0.7, stellarGenerations: 6, blackHoleCount: 1e17 });
 
 test("the era gate is enforced HERE, not trusted from the client", () => {
   // A client claiming gold from a universe that never merged a neutron star
@@ -92,9 +94,29 @@ test("gates mirror the client's thresholds exactly", () => {
   assert.equal(isAvailable("gold", { metallicity: 0.3 }), true);
   assert.equal(isAvailable("gold", { metallicity: 0.29 }), false);
   assert.equal(isAvailable("platinum", { metallicity: 0.4 }), true);
-  assert.equal(isAvailable("uranium", { metallicity: 0.6 }), true);
-  assert.equal(isAvailable("degenerate", { stellarGenerations: 5 }), true);
-  assert.equal(isAvailable("hawking", { blackHoleCount: 1 }), true);
+  assert.equal(isAvailable("uranium", { metallicity: 0.45 }), true);
+  assert.equal(isAvailable("uranium", { metallicity: 0.44 }), false);
+  // Both tier-5s moved onto blackHoleCount: stellarGenerations saturates at
+  // its clamp of 10 by step 25, and every universe is seeded with black holes,
+  // so the old gates opened on steps 3 and 1 respectively.
+  assert.equal(isAvailable("degenerate", { stellarGenerations: 10 }), false);
+  assert.equal(isAvailable("degenerate", { blackHoleCount: 3e16 }), true);
+  assert.equal(isAvailable("hawking", { blackHoleCount: 5e3 }), false);
+  assert.equal(isAvailable("hawking", { blackHoleCount: 5e16 }), true);
+});
+
+test("every material is obtainable inside a run, on the hardest difficulty", () => {
+  // The state a real universe is actually in after a 400-step run on Advanced,
+  // measured by stepping the live PhysicsEngine. Advanced ages slowest per
+  // step, so it is the worst case for every gate.
+  //
+  // This is the guard for a whole class of bug: a gate written against the
+  // 0-1 range a quantity appears to have, rather than the range a universe
+  // reaches. Enrichment saturates near 60% of solar and stops, so uranium's
+  // old 0.6 gate opened on step 748, 1110, or never.
+  const endOfHardestRun = { metallicity: 0.483, stellarGenerations: 10, blackHoleCount: 8.3e16 };
+  const missing = MATERIAL_IDS.filter((id) => !isAvailable(id, endOfHardestRun));
+  assert.deepEqual(missing, [], `unreachable in a real run: ${missing.join(", ")}`);
 });
 
 test("a malformed universe never throws", () => {
