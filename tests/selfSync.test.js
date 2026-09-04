@@ -196,3 +196,47 @@ test("a merge stamps when it happened", () => {
   const when = new Date("2026-02-02T00:00:00Z");
   assert.equal(mergeSelf(null, defaults(), when).updatedAt, when);
 });
+
+// --- classify certification ----------------------------------------------
+
+test("certification survives a device switch", () => {
+  const a = { ascensions: 0, classify: { elliptical: { calls: 14, correct: 13 } } };
+  const merged = mergeSelf(a, { ascensions: 0 }, new Date());
+  assert.deepEqual(merged.classify.elliptical, { calls: 14, correct: 13 });
+});
+
+test("merging takes the further-along record, NOT the sum", () => {
+  // Summing would double-count what both devices already agree on: sync down,
+  // scan twelve, sync up, and the merge would read twenty-four - certifying a
+  // player who never earned it.
+  const a = { ascensions: 0, classify: { spiral: { calls: 12, correct: 11 } } };
+  const b = { ascensions: 0, classify: { spiral: { calls: 8, correct: 7 } } };
+  assert.deepEqual(mergeSelf(a, b, new Date()).classify.spiral, { calls: 12, correct: 11 });
+  assert.deepEqual(mergeSelf(b, a, new Date()).classify.spiral, { calls: 12, correct: 11 },
+    "and it is order-independent");
+});
+
+test("families merge independently", () => {
+  const a = { ascensions: 0, classify: { spiral: { calls: 20, correct: 19 } } };
+  const b = { ascensions: 0, classify: { barred: { calls: 15, correct: 14 } } };
+  const m = mergeSelf(a, b, new Date());
+  assert.equal(m.classify.spiral.calls, 20);
+  assert.equal(m.classify.barred.calls, 15);
+});
+
+test("a client cannot certify itself by claiming more correct than calls", () => {
+  const cheat = { ascensions: 0, classify: { spiral: { calls: 2, correct: 999 } } };
+  const m = mergeSelf(cheat, null, new Date());
+  assert.equal(m.classify.spiral.correct, 2, "correct is clamped to calls");
+});
+
+test("junk classify data never reaches the record", () => {
+  for (const junk of [null, "nonsense", 42, { spiral: "no" }, { spiral: { calls: -5 } }]) {
+    const m = mergeSelf({ ascensions: 0, classify: junk }, null, new Date());
+    assert.equal(typeof m.classify, "object");
+    for (const v of Object.values(m.classify)) {
+      assert.ok(Number.isFinite(v.calls) && v.calls > 0);
+      assert.ok(v.correct <= v.calls);
+    }
+  }
+});

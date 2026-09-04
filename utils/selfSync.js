@@ -52,6 +52,10 @@ function defaults() {
     rapport: 0,
     asked: [],
     bests: {},
+    // Morphology-reading record per family: { elliptical: {calls, correct} }.
+    // Cumulative: it records what the PLAYER learned, so it is summed across
+    // devices rather than taken from a winner.
+    classify: {},
     updatedAt: null,
   };
 }
@@ -112,6 +116,16 @@ function normalize(input) {
     }
   }
 
+  const classify = {};
+  if (input.classify && typeof input.classify === "object") {
+    for (const [k, v] of Object.entries(input.classify)) {
+      const calls = Math.max(0, Math.floor(num(v?.calls)));
+      // correct can never exceed calls, or a client could certify itself.
+      const correct = Math.min(calls, Math.max(0, Math.floor(num(v?.correct))));
+      if (calls > 0) classify[k] = { calls, correct };
+    }
+  }
+
   return {
     schemaVersion: SCHEMA_VERSION,
     ascensions: Math.max(0, Math.floor(num(input.ascensions))),
@@ -125,6 +139,7 @@ function normalize(input) {
     rapport: num(input.rapport),
     asked: arr(input.asked),
     bests,
+    classify,
     updatedAt: input.updatedAt || null,
   };
 }
@@ -147,6 +162,16 @@ function mergeSelf(current, incoming, now = new Date()) {
     bests[k] = Math.max(num(bests[k], 0), v);
   }
 
+  // Certification takes the FURTHER-ALONG record per family, not the sum.
+  // Summing would double-count the calls both devices already agree on: sync
+  // down, scan twelve galaxies, sync up, and the merge would read twenty-four.
+  // Per family, more calls means the more complete history.
+  const classify = { ...a.classify };
+  for (const [k, v] of Object.entries(b.classify)) {
+    const mine = classify[k];
+    if (!mine || v.calls > mine.calls) classify[k] = { ...v };
+  }
+
   return {
     schemaVersion: SCHEMA_VERSION,
 
@@ -158,6 +183,7 @@ function mergeSelf(current, incoming, now = new Date()) {
     anamnesisSeen: a.anamnesisSeen || b.anamnesisSeen,
     asked: union(a.asked, b.asked),
     bests,
+    classify,
     // Generous on purpose: rapport is a relationship, and the bias everywhere
     // in this file is "never take something away from the player".
     rapport: Math.max(a.rapport, b.rapport),
